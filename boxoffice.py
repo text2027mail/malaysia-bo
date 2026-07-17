@@ -14,8 +14,6 @@ from aiohttp_retry import RetryClient, ExponentialRetry
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import xml.etree.ElementTree as ET
 
-print("📦 Imports loaded successfully")
-
 # ================= CONFIGURATION =================
 # List of movies to scrape – edit as needed
 MOVIES = [
@@ -30,7 +28,7 @@ MOVIES = [
     # Add more movies here
 ]
 
-# Concurrency limits – now actually used with semaphores
+# Concurrency limits
 CONCURRENCY_SHOWTIMES = 20   # parallel chain requests
 CONCURRENCY_SEATMAPS = 50    # parallel seat fetch requests
 
@@ -65,7 +63,7 @@ def get_random_user_agent():
     ]
     return random.choice(uas)
 
-# ================= GITHUB HELPERS =================
+# ================= GITHUB HELPERS (same as USA script) =================
 def github_get_file(path):
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{path}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -114,8 +112,8 @@ def load_boxoffice_file(date_obj):
                         "movie_title": arr[3],
                         "movie_id": arr[4],
                         "theatre": arr[5],
-                        "city": arr[6],
-                        "state": arr[7],
+                        "city": arr[6],   # optional, may be empty
+                        "state": arr[7],  # optional
                         "format": arr[8],
                         "language": arr[9],
                         "totalSeatSold": arr[10],
@@ -135,7 +133,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
         print(f"No shows for {date_obj}, skipping boxoffice file.")
         return
 
-    # Deduplicate by showtime_id
+    # Deduplicate by showtime_id (should already be unique)
     seen = set()
     unique = []
     for s in shows_dict:
@@ -165,7 +163,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
             s.get("grossRevenueMYR", 0.0),
         ])
 
-    # Summary by movie
+    # Summary by movie (group by movie_title + movie_id)
     movie_summary = defaultdict(lambda: {
         "shows": 0,
         "tickets": 0,
@@ -222,7 +220,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
     }
     github_put_file(error_path, json.dumps(error_payload, indent=2, ensure_ascii=False), sha)
 
-    # 3. Logs file
+    # 3. Logs file – read existing, append, write back
     logs_path = f"{base_path}/{date_obj.strftime('%d-%m')}_logs.json"
     existing_logs = []
     content, sha = github_get_file(logs_path)
@@ -234,6 +232,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
         except Exception:
             existing_logs = []
 
+    # Compute log entry
     total_gross = 0.0
     total_shows = 0
     total_sold = 0
@@ -263,50 +262,37 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
     print(f"💾 Saved/updated all files for {date_obj} in {REPO_OWNER}/{REPO_NAME}")
 
 # ================= FETCH FUNCTIONS =================
-# ---------- Semaphores for concurrency ----------
-seat_sem = asyncio.Semaphore(CONCURRENCY_SEATMAPS)
-showtime_sem = asyncio.Semaphore(CONCURRENCY_SHOWTIMES)
-
 # ---------- FST (LFS) ----------
 async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
-    """Fetch seat layout for one FST show."""
-    async with seat_sem:
-        try:
-            url = "https://fst.com.my/SeatLayout/GetSeatLayout"
-            data = {
-                "CinemaId": cinema_id,
-                "ShowId": show_id,
-                "MovieId": movie_id,
-                "Gender": "All"
-            }
-            async with session.post(url, data=data, timeout=10) as resp:
-                if resp.status != 200:
-                    return None
-                html = await resp.text()
-                import re
-                total = len(re.findall(r'<div class="seat-icons', html))
-                booked = len(re.findall(r'class="seat-icons booked-clr', html))
-                price_match = re.search(r'type-name="ADULT".*?ticket-price="([\d.]+)"', html)
-                if not price_match:
-                    price_match = re.search(r'ticket-price="([\d.]+)"', html)
-                price = float(price_match.group(1)) if price_match else 0.0
-                return {"total": total, "sold": booked, "price": price}
-        except Exception:
-            return None
-
-async def fetch_fst_showtimes(session, movie_id, cinema_id, date_str):
-    async with showtime_sem:
-        try:
-            url = "https://fst.com.my/Movies/GetShowTimes"
-            payload = {"cinemaId": cinema_id, "movieId": movie_id, "showDate": date_str}
-            async with session.post(url, data=payload, timeout=10) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                showtimes = data.get("Result", [])
-                return [{"cinema_id": cinema_id, "show_id": st["Id"]} for st in showtimes]
-        except:
-            return []
+    """Fetch seat layout for one FST show, return (total, sold, price) or None."""
+    try:
+        url = "https://fst.com.my/SeatLayout/GetSeatLayout"
+        data = {
+            "CinemaId": cinema_id,
+            "ShowId": show_id,
+            "MovieId": movie_id,
+            "Gender": "All"
+        }
+        async with session.post(url, data=data, timeout=10) as resp:
+            if resp.status != 200:
+                return None
+            html = await resp.text()
+            # Parse HTML with regex or simple string search
+            # We need to extract seat icons and price
+            # Since we are in Python without DOM, we'll use regex.
+            import re
+            # Count total seats and booked
+            total = len(re.findall(r'<div class="seat-icons', html))
+            booked = len(re.findall(r'class="seat-icons booked-clr', html))
+            # Extract adult price from the hidden div
+            price_match = re.search(r'type-name="ADULT".*?ticket-price="([\d.]+)"', html)
+            if not price_match:
+                # fallback: first radio
+                price_match = re.search(r'ticket-price="([\d.]+)"', html)
+            price = float(price_match.group(1)) if price_match else 0.0
+            return {"total": total, "sold": booked, "price": price}
+    except Exception:
+        return None
 
 async def fetch_fst_for_date(date_obj, movie_ids):
     """Fetch all FST shows for a given date and movie IDs."""
@@ -328,7 +314,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
             except:
                 continue
 
-            # Step 2: get showtimes per cinema
+            # Step 2: for each cinema, get showtimes
             cinema_tasks = []
             for cinema in cinemas:
                 cinema_tasks.append(fetch_fst_showtimes(session, movie_id, cinema["Id"], date_str))
@@ -351,12 +337,12 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 if isinstance(seat_data, dict) and seat_data:
                     show = all_shows[idx]
                     shows.append({
-                        "showtime_id": f"FST_{show['show_id']}",
+                        "showtime_id": f"FST_{show['show_id']}",   # unique key
                         "date": to_tgv_date(date_obj),
                         "chain": "FST",
-                        "movie_title": "",
+                        "movie_title": "",   # we'll fill later from config
                         "movie_id": str(movie_id),
-                        "theatre": str(show["cinema_id"]),  # no name available
+                        "theatre": show.get("cinema_name", ""),  # not available, use cinema id
                         "city": "",
                         "state": "",
                         "format": "Standard",
@@ -369,80 +355,27 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                     })
     return shows
 
+async def fetch_fst_showtimes(session, movie_id, cinema_id, date_str):
+    try:
+        url = "https://fst.com.my/Movies/GetShowTimes"
+        payload = {"cinemaId": cinema_id, "movieId": movie_id, "showDate": date_str}
+        async with session.post(url, data=payload, timeout=10) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            showtimes = data.get("Result", [])
+            return [{"cinema_id": cinema_id, "show_id": st["Id"]} for st in showtimes]
+    except:
+        return []
+
 # ---------- TGV ----------
-async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
-    async with showtime_sem:
-        try:
-            url = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_get"
-            payload = {"cinemaid": cinemaid, "businessdate": date_str, "movieid": movieid, "retrieveexpired": False}
-            async with session.post(url, json=payload, timeout=10) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                cinema_data = data["results"]["businessday"]["cinemas"][0]
-                movies = cinema_data.get("movies", [])
-                sessions = []
-                for movie in movies:
-                    for exp in movie.get("experiences", []):
-                        for s in exp.get("sessions", []):
-                            sessions.append({"cinemaid": cinemaid, "sessionid": s["sessionid"]})
-                return sessions
-        except:
-            return []
-
-async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
-    async with seat_sem:
-        try:
-            # Fetch seat plan
-            url_seat = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_getseatplan"
-            payload = {"cinemaid": cinemaid, "sessionid": sessionid}
-            async with session.post(url_seat, json=payload, timeout=10) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                areas = data["results"]["seatlayout"]["areas"]
-
-            # Fetch ticket prices
-            url_ticket = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_gettickets"
-            payload_ticket = {"cinemaid": cinemaid, "sessionid": sessionid, "areacategorycodes": "", "usetemplateuser": True}
-            async with session.post(url_ticket, json=payload_ticket, timeout=10) as resp2:
-                if resp2.status != 200:
-                    return None
-                ticket_data = await resp2.json()
-                tickets = ticket_data["results"]["tickets"]
-                price_map = {}
-                for t in tickets:
-                    code = t["areaCategoryCode"]
-                    price = t["priceInCents"] / 100.0
-                    if code not in price_map or price > price_map[code]:
-                        price_map[code] = price
-
-                total_sold = 0
-                total_capacity = 0
-                area_prices = []
-                for area in areas:
-                    code = area["areaCategoryCode"]
-                    price = price_map.get(code, 0.0)
-                    rows = area.get("rows", [])
-                    for row in rows:
-                        for seat in row.get("seats", []):
-                            total_capacity += 1
-                            if seat.get("status") == 1:  # sold
-                                total_sold += 1
-                                area_prices.append(price)
-                gross = sum(area_prices)
-                avg_price = gross / total_sold if total_sold else 0.0
-                return {"total": total_capacity, "sold": total_sold, "price": avg_price}
-        except Exception:
-            return None
-
 async def fetch_tgv_for_date(date_obj, movie_ids):
     date_str = to_tgv_date(date_obj)
     api_base = "https://api.tgv.com.my/api/boxoffice/v1"
     shows = []
     async with aiohttp.ClientSession() as session:
         for movie_id in movie_ids:
-            # get cinemas
+            # Step 1: get cinemas for this movie
             try:
                 url_cinemas = f"{api_base}/moviesession_getmoviecinemas"
                 payload = {"businessday": date_str, "movieid": movie_id, "experienceGroup": ""}
@@ -460,7 +393,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
             except:
                 continue
 
-            # get sessions
+            # Step 2: get sessions for each cinema
             cinema_tasks = []
             for cinema in all_cinemas:
                 cinema_tasks.append(fetch_tgv_sessions(session, cinema["cinemaid"], movie_id, date_str))
@@ -473,7 +406,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
             if not all_sessions:
                 continue
 
-            # fetch seat data
+            # Step 3: fetch seat/ticket data for each session
             seat_tasks = []
             for sess in all_sessions:
                 seat_tasks.append(fetch_tgv_seat(session, sess["cinemaid"], sess["sessionid"], date_str))
@@ -501,36 +434,80 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                     })
     return shows
 
-# ---------- GSC ----------
-async def fetch_gsc_seat(session, show, date_str):
-    async with seat_sem:
-        try:
-            seat_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getHallSeatStatus?locationid={show['location_id']}&hallid={show['hall']}&showdate={date_str}&showtime={show['time']}"
-            price_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getTicketPricingEpaySpecialV5?locationid={show['location_id']}&hallid={show['hall']}&filmid={show['film_id']}&showdate={date_str}&showtime={show['time']}"
+async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
+    try:
+        url = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_get"
+        payload = {"cinemaid": cinemaid, "businessdate": date_str, "movieid": movieid, "retrieveexpired": False}
+        async with session.post(url, json=payload, timeout=10) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            cinema_data = data["results"]["businessday"]["cinemas"][0]
+            movies = cinema_data.get("movies", [])
+            sessions = []
+            for movie in movies:
+                for exp in movie.get("experiences", []):
+                    for s in exp.get("sessions", []):
+                        sessions.append({"cinemaid": cinemaid, "sessionid": s["sessionid"]})
+            return sessions
+    except:
+        return []
 
-            async with session.get(seat_url, timeout=10) as resp_seat:
-                if resp_seat.status != 200:
+async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
+    try:
+        # Fetch seat plan
+        url_seat = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_getseatplan"
+        payload = {"cinemaid": cinemaid, "sessionid": sessionid}
+        async with session.post(url_seat, json=payload, timeout=10) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            areas = data["results"]["seatlayout"]["areas"]
+            total_seats = 0
+            sold_seats = 0
+            # Also need price per area
+            # Fetch ticket prices
+            url_ticket = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_gettickets"
+            payload_ticket = {"cinemaid": cinemaid, "sessionid": sessionid, "areacategorycodes": "", "usetemplateuser": True}
+            async with session.post(url_ticket, json=payload_ticket, timeout=10) as resp2:
+                if resp2.status != 200:
                     return None
-                seat_xml = await resp_seat.text()
-                seat_root = ET.fromstring(seat_xml)
-                seats = seat_root.findall(".//col")
-                total = len(seats)
-                sold = sum(1 for col in seats if col.get("status") != "A")
+                ticket_data = await resp2.json()
+                tickets = ticket_data["results"]["tickets"]
+                price_map = {}
+                for t in tickets:
+                    code = t["areaCategoryCode"]
+                    price = t["priceInCents"] / 100.0
+                    if code not in price_map or price > price_map[code]:
+                        price_map[code] = price
 
-            async with session.get(price_url, timeout=10) as resp_price:
-                if resp_price.status != 200:
-                    price = 0.0
-                else:
-                    price_xml = await resp_price.text()
-                    price_root = ET.fromstring(price_xml)
-                    ticket = price_root.find(".//ticket[@seatcategory='ADULT']")
-                    if ticket is None:
-                        ticket = price_root.find(".//ticket")
-                    price = float(ticket.get("price", "0")) if ticket is not None else 0.0
-            return {"total": total, "sold": sold, "price": price}
-        except Exception:
-            return None
+                # Now compute sold per area
+                total_sold = 0
+                total_capacity = 0
+                area_prices = []
+                for area in areas:
+                    code = area["areaCategoryCode"]
+                    price = price_map.get(code, 0.0)
+                    rows = area.get("rows", [])
+                    for row in rows:
+                        for seat in row.get("seats", []):
+                            total_capacity += 1
+                            if seat.get("status") == 1:  # sold
+                                total_sold += 1
+                                area_prices.append(price)
+                # Compute gross as sum of price per sold seat (using the price map)
+                # Since we don't have per-seat price, we can compute gross = total_sold * average price? Actually we should sum prices for each sold seat.
+                # But we don't have per-seat price, so we approximate by summing price per sold seat using area price.
+                # We'll do: for each sold seat, we need its area's price. We already have area_prices list length = total_sold.
+                # So gross = sum(area_prices)
+                gross = sum(area_prices)
+                # Determine average adult price (approx)
+                avg_price = gross / total_sold if total_sold else 0.0
+                return {"total": total_capacity, "sold": total_sold, "price": avg_price}
+    except Exception as e:
+        return None
 
+# ---------- GSC ----------
 async def fetch_gsc_for_date(date_obj, gsc_id):
     date_str = to_gsc_date(date_obj)
     base_show = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getShowTimesByMovie_ParentChild_V2?parentid={gsc_id}&oprndate={date_str}"
@@ -542,6 +519,7 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
                     return []
                 xml_text = await resp.text()
                 root = ET.fromstring(xml_text)
+                # Parse locations and shows
                 for loc in root.findall(".//location"):
                     theatre = loc.get("name")
                     location_id = loc.get("id")
@@ -550,13 +528,17 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
                         for show_elem in child.findall("show"):
                             hid = show_elem.get("hid")
                             time = show_elem.get("time")
+                            timestr = show_elem.get("timestr")
+                            # Build show object
                             show_obj = {
                                 "location_id": location_id,
                                 "film_id": film_id,
                                 "theatre": theatre,
                                 "hall": hid,
                                 "time": time,
+                                "timestr": timestr
                             }
+                            # Fetch seat and pricing
                             seat_data = await fetch_gsc_seat(session, show_obj, date_str)
                             if seat_data:
                                 shows.append({
@@ -580,7 +562,43 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
             print(f"GSC fetch error for {date_str}: {e}")
     return shows
 
-# ================= MERGE LOGIC =================
+async def fetch_gsc_seat(session, show, date_str):
+    # Seat URL
+    seat_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getHallSeatStatus?locationid={show['location_id']}&hallid={show['hall']}&showdate={date_str}&showtime={show['time']}"
+    # Price URL
+    price_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getTicketPricingEpaySpecialV5?locationid={show['location_id']}&hallid={show['hall']}&filmid={show['film_id']}&showdate={date_str}&showtime={show['time']}"
+    try:
+        # Fetch seat XML
+        async with session.get(seat_url, timeout=10) as resp_seat:
+            if resp_seat.status != 200:
+                return None
+            seat_xml = await resp_seat.text()
+            seat_root = ET.fromstring(seat_xml)
+            seats = seat_root.findall(".//col")
+            total = len(seats)
+            sold = sum(1 for col in seats if col.get("status") != "A")
+
+        # Fetch pricing XML
+        async with session.get(price_url, timeout=10) as resp_price:
+            if resp_price.status != 200:
+                # fallback: use 0 price
+                price = 0.0
+            else:
+                price_xml = await resp_price.text()
+                price_root = ET.fromstring(price_xml)
+                # Find adult ticket price (or any)
+                ticket = price_root.find(".//ticket[@seatcategory='ADULT']")
+                if ticket is None:
+                    ticket = price_root.find(".//ticket")
+                if ticket is not None:
+                    price = float(ticket.get("price", "0"))
+                else:
+                    price = 0.0
+        return {"total": total, "sold": sold, "price": price}
+    except Exception as e:
+        return None
+
+# ================= MERGE LOGIC (similar to USA) =================
 def merge_show(old, new):
     if not old:
         return new
@@ -592,6 +610,7 @@ def merge_show(old, new):
         chosen = new.copy()
     else:
         chosen = old.copy()
+    # Recalculate occupancy and gross
     total = chosen.get("totalSeatCount", 0)
     sold = chosen.get("totalSeatSold", 0)
     chosen["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
@@ -599,40 +618,71 @@ def merge_show(old, new):
     chosen["grossRevenueMYR"] = round(price * sold, 2)
     return chosen
 
-# ================= MAIN =================
+# ================= MAIN SCRAPER =================
+async def scrape_date(date_obj):
+    print(f"\n📅 Processing {format_display(date_obj)}")
+    # For each movie, fetch shows from all chains
+    all_shows = []
+    for movie in MOVIES:
+        movie_name = movie["name"]
+        print(f"  🎬 {movie_name}")
+        # Fetch from each chain in parallel
+        tasks = []
+        if movie.get("fstIds"):
+            tasks.append(fetch_fst_for_date(date_obj, movie["fstIds"]))
+        else:
+            tasks.append(asyncio.sleep(0, result=[]))
+        if movie.get("tgvIds"):
+            tasks.append(fetch_tgv_for_date(date_obj, movie["tgvIds"]))
+        else:
+            tasks.append(asyncio.sleep(0, result=[]))
+        if movie.get("gscId"):
+            tasks.append(fetch_gsc_for_date(date_obj, movie["gscId"]))
+        else:
+            tasks.append(asyncio.sleep(0, result=[]))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for chain_shows in results:
+            if isinstance(chain_shows, list):
+                for s in chain_shows:
+                    s["movie_title"] = movie_name  # fill movie title
+                    all_shows.append(s)
+            elif isinstance(chain_shows, Exception):
+                print(f"    ⚠️ Error in chain fetch: {chain_shows}")
+
+    print(f"  📊 Total shows fetched: {len(all_shows)}")
+    return all_shows
+
 async def main():
-    try:
-        tz = ZoneInfo("Asia/Kuala_Lumpur")
-    except Exception:
-        print("⚠️ ZoneInfo failed; falling back to UTC")
-        tz = ZoneInfo("UTC")
+    tz = ZoneInfo("Asia/Kuala_Lumpur")
     today = datetime.now(tz).date()
     print(f"📅 Today in Malaysia: {today.strftime('%Y-%m-%d')}")
 
-    if not MOVIES:
-        print("❌ No movies configured. Exiting.")
-        return
-
     # Group movies by the dates they need to scrape
     movies_by_date = defaultdict(list)
+
     for movie in MOVIES:
         start_date = date.fromisoformat(movie["dateStart"])
         end_date = date.fromisoformat(movie["dateEnd"])
 
         if today <= end_date:
+            # Scrape from max(today, start_date) to end_date inclusive
             first_date = max(today, start_date)
             if first_date <= end_date:
+                # Generate all dates in the range
                 delta_days = (end_date - first_date).days
                 for i in range(delta_days + 1):
                     scrape_date = first_date + timedelta(days=i)
                     movies_by_date[scrape_date].append(movie)
         else:
+            # After the movie's run, scrape only today
             movies_by_date[today].append(movie)
 
     # Process each unique date
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
+        # Load existing data for this target_date
         existing_shows = load_boxoffice_file(target_date)
         print(f"📂 Loaded {len(existing_shows)} shows from existing boxoffice data (remote).")
 
@@ -641,6 +691,7 @@ async def main():
             sid = str(s.get("showtime_id"))
             merged_dict[sid] = s
 
+        # Scrape fresh data for this date from all movies that need it
         all_fresh = []
         for movie in movies_for_date:
             movie_name = movie["name"]
@@ -670,6 +721,7 @@ async def main():
 
         print(f"  📊 Total fresh shows fetched: {len(all_fresh)}")
 
+        # Merge fresh into merged_dict
         for fresh in all_fresh:
             sid = str(fresh.get("showtime_id"))
             if sid in merged_dict:
@@ -681,17 +733,10 @@ async def main():
         merged_shows = list(merged_dict.values())
         print(f"🔄 After merging: {len(merged_shows)} shows.")
 
+        # Separate errors for logging
         error_shows = [s for s in merged_shows if "error" in s]
+
+        # Save to GitHub under the target date
         save_boxoffice_file(target_date, merged_shows, error_shows)
 
     print("\n✅ Done.")
-
-if __name__ == "__main__":
-    print("🚀 Script started")
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"❌ CRASH: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
