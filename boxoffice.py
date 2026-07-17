@@ -802,21 +802,17 @@ async def main():
                 # Convert ids to set of strings for matching
                 movie_id_set = set(str(i) for i in ids)
 
-                # Remove old shows for this movie + chain from merged_dict
-                to_remove = [
-                    sid
-                    for sid, show in merged_dict.items()
-                    if show.get("chain") == chain_name
-                    and str(show.get("movie_id", "")) in movie_id_set
-                ]
-
-                for sid in to_remove:
-                    merged_dict.pop(sid, None)
-
-                # Add latest snapshot
+                # Merge into existing data. Never delete missing shows.
                 for fresh in fresh_shows:
                     fresh["movie_title"] = movie_name
-                    merged_dict[str(fresh["showtime_id"])] = fresh
+
+                    sid = str(fresh["showtime_id"])
+                    old = merged_dict.get(sid)
+
+                    if old:
+                        merged_dict[sid] = merge_show(old, fresh)
+                    else:
+                        merged_dict[sid] = fresh
 
         # After processing all movies, merged_dict contains the final set
         merged_shows = list(merged_dict.values())
