@@ -653,43 +653,83 @@ async def scrape_date(date_obj):
     print(f"  📊 Total shows fetched: {len(all_shows)}")
     return all_shows
 
+
 async def main():
-    # Load existing boxoffice data for today (from GitHub)
-    today = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).date()
-    date_str = today.strftime("%Y-%m-%d")
-    print(f"📅 Box Office for today: {date_str}")
+    # Malaysian timezone
+    tz = ZoneInfo("Asia/Kuala_Lumpur")
+    today = datetime.now(tz).date()
+    print(f"📅 Today in Malaysia: {today.strftime('%Y-%m-%d')}")
 
-    # Load existing data from GitHub
-    existing_shows = load_boxoffice_file(today)
-    print(f"📂 Loaded {len(existing_shows)} shows from existing boxoffice data (remote).")
+    # Group movies by their target date (max of today and dateEnd)
+    movies_by_date = defaultdict(list)
+    for movie in MOVIES:
+        end_date = date.fromisoformat(movie["dateEnd"])
+        target_date = max(today, end_date)  # future end date or today
+        movies_by_date[target_date].append(movie)
+        print(f"  🎬 {movie['name']} → target date: {target_date.strftime('%Y-%m-%d')}")
 
-    # Build merged dict from existing
-    merged_dict = {}
-    for s in existing_shows:
-        sid = str(s.get("showtime_id"))
-        merged_dict[sid] = s
+    # For each target date, scrape all movies assigned to it
+    for target_date, movies_for_date in movies_by_date.items():
+        print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
-    # Scrape fresh data for today
-    fresh_shows = await scrape_date(today)
-    print(f"🎟️ Fresh shows: {len(fresh_shows)}")
+        # Load existing boxoffice data for this date (from GitHub)
+        existing_shows = load_boxoffice_file(target_date)
+        print(f"📂 Loaded {len(existing_shows)} shows from existing boxoffice data (remote).")
 
-    # Merge fresh into merged_dict
-    for fresh in fresh_shows:
-        sid = str(fresh.get("showtime_id"))
-        if sid in merged_dict:
-            merged_dict[sid] = merge_show(merged_dict[sid], fresh)
-        else:
-            if "error" not in fresh:
-                merged_dict[sid] = fresh
+        # Build merged dict from existing
+        merged_dict = {}
+        for s in existing_shows:
+            sid = str(s.get("showtime_id"))
+            merged_dict[sid] = s
 
-    merged_shows = list(merged_dict.values())
-    print(f"🔄 After merging: {len(merged_shows)} shows.")
+        # Scrape fresh data for this date (only for the relevant movies)
+        all_fresh = []
+        for movie in movies_for_date:
+            movie_name = movie["name"]
+            print(f"  🎬 Scraping {movie_name} for {target_date.strftime('%Y-%m-%d')}")
+            tasks = []
+            if movie.get("fstIds"):
+                tasks.append(fetch_fst_for_date(target_date, movie["fstIds"]))
+            else:
+                tasks.append(asyncio.sleep(0, result=[]))
+            if movie.get("tgvIds"):
+                tasks.append(fetch_tgv_for_date(target_date, movie["tgvIds"]))
+            else:
+                tasks.append(asyncio.sleep(0, result=[]))
+            if movie.get("gscId"):
+                tasks.append(fetch_gsc_for_date(target_date, movie["gscId"]))
+            else:
+                tasks.append(asyncio.sleep(0, result=[]))
 
-    # Separate errors for logging
-    error_shows = [s for s in merged_shows if "error" in s]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for chain_shows in results:
+                if isinstance(chain_shows, list):
+                    for s in chain_shows:
+                        s["movie_title"] = movie_name
+                        all_fresh.append(s)
+                elif isinstance(chain_shows, Exception):
+                    print(f"    ⚠️ Error in chain fetch: {chain_shows}")
 
-    # Save to GitHub
-    save_boxoffice_file(today, merged_shows, error_shows)
+        print(f"  📊 Total fresh shows fetched for {target_date.strftime('%Y-%m-%d')}: {len(all_fresh)}")
+
+        # Merge fresh into merged_dict
+        for fresh in all_fresh:
+            sid = str(fresh.get("showtime_id"))
+            if sid in merged_dict:
+                merged_dict[sid] = merge_show(merged_dict[sid], fresh)
+            else:
+                if "error" not in fresh:
+                    merged_dict[sid] = fresh
+
+        merged_shows = list(merged_dict.values())
+        print(f"🔄 After merging: {len(merged_shows)} shows for {target_date.strftime('%Y-%m-%d')}.")
+
+        # Separate errors for logging
+        error_shows = [s for s in merged_shows if "error" in s]
+
+        # Save to GitHub under the target date
+        save_boxoffice_file(target_date, merged_shows, error_shows)
+
     print("\n✅ Done.")
 
 if __name__ == "__main__":
