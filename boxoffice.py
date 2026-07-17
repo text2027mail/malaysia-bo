@@ -63,6 +63,111 @@ def get_random_user_agent():
     ]
     return random.choice(uas)
 
+# ---------- GSC address parser ----------
+def parse_gsc_address(address: str):
+    """Extract city and state from GSC address string."""
+    if not address:
+        return "", ""
+    # Example address: "...\n55188 Kuala Lumpur\nWilayah Persekutuan,KUL,55188"
+    # Find the last line that contains a state abbreviation (two or three uppercase letters)
+    lines = address.split('\n')
+    state_code = ""
+    city = ""
+    for line in reversed(lines):
+        line = line.strip()
+        # Look for pattern like "KUL,55188" or "SGR,47800"
+        match = re.search(r'([A-Z]{2,3}),\s*\d+$', line)
+        if match:
+            state_code = match.group(1)
+            # The line before that might contain the city
+            # Find the line that has a city name (often ends with "Kuala Lumpur", "Petaling Jaya", etc.)
+            # We'll take the line immediately before the state line as city, if it exists
+            idx = lines.index(line)
+            if idx > 0:
+                prev_line = lines[idx-1].strip()
+                # If prev_line looks like a city (not empty and not an address line with numbers)
+                if prev_line and not re.search(r'\d', prev_line):
+                    city = prev_line
+            break
+    if not city and state_code:
+        # Fallback: try to find city in any line that is not part of address numbers
+        for line in lines:
+            line = line.strip()
+            if line and not re.search(r'\d', line) and ',' not in line:
+                # likely a city name
+                city = line
+                break
+    # Map state code to full name if needed
+    state_map = {
+        "KUL": "Kuala Lumpur",
+        "SGR": "Selangor",
+        "JHR": "Johor",
+        "PNG": "Penang",
+        "PRK": "Perak",
+        "NSN": "Negeri Sembilan",
+        "MLK": "Melaka",
+        "KDH": "Kedah",
+        "PLS": "Perlis",
+        "PHG": "Pahang",
+        "SBH": "Sabah",
+        "SWK": "Sarawak",
+        "TRG": "Terengganu",
+        "KLU": "Kelantan",  # not sure if used
+    }
+    state_full = state_map.get(state_code, state_code)
+    return city, state_full
+
+# ---------- TGV city extractor (optional) ----------
+TGV_CITY_MAP = {
+    "SUNWAY PYRAMID": "Subang Jaya",
+    "1 UTAMA": "Bandar Utama",
+    "PAVILION DAMANSARA HEIGHTS": "Damansara Heights",
+    "PAVILION KUALA LUMPUR": "Kuala Lumpur",
+    "SUNWAY SQUARE": "Petaling Jaya",
+    "ALAMANDA": "Putrajaya",
+    "1 SHAMELIN": "Shah Alam",
+    "AMPANG POINT": "Ampang",
+    "BUKIT RAJA": "Klang",
+    "BUKIT TINGGI": "Klang",
+    "CENTRAL I-CITY": "Shah Alam",
+    "CHERAS SELATAN": "Cheras",
+    "DPULZE CYBERJAYA": "Cyberjaya",
+    "PAVILION BUKIT JALIL": "Bukit Jalil",
+    "STRAND KOTA DAMANSARA": "Kota Damansara",
+    "JAYA SEKSYEN 14": "Petaling Jaya",
+    "KEPONG": "Kepong",
+    "RAWANG": "Rawang",
+    "SETIAWALK PUCHONG": "Puchong",
+    "SUNWAY PUTRA": "Kuala Lumpur",
+    "SURIA KLCC": "Kuala Lumpur",
+    "SUNWAY VELOCITY": "Cheras",
+    "SUNWAY WANGSA MALL": "Wangsa Maju",
+    "KULAIJAYA": "Kulai",
+    "TEBRAU CITY": "Johor Bahru",
+    "TOPPEN": "Johor Bahru",
+    "BUKIT INDAH": "Johor Bahru",
+    "TASEK CENTRAL": "Johor Bahru",
+    "KINTA CITY": "Ipoh",
+    "SERI MANJUNG": "Manjung",
+    "STATION 18 IPOH": "Ipoh",
+    "TAIPING": "Taiping",
+    "SENTRA MALL KLEBANG": "Klebang",
+    "1ST AVENUE PENANG": "George Town",
+    "BUKIT MERTAJAM": "Bukit Mertajam",
+    "GURNEY PARAGON": "George Town",
+    "SEREMBAN 2": "Seremban",
+    "BOULEVARD BINTULU": "Bintulu",
+    "VIVACITY KUCHING": "Kuching",
+}
+
+def get_tgv_city(name: str) -> str:
+    """Attempt to find city from TGV cinema name."""
+    name_upper = name.upper().strip()
+    for key, city in TGV_CITY_MAP.items():
+        if key in name_upper:
+            return city
+    return ""
+
 # ================= GITHUB HELPERS =================
 def github_get_file(path):
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{path}"
@@ -93,7 +198,6 @@ def github_put_file(path, content, sha=None):
 
 # ================= THEATRE DATABASE =================
 def load_theatre_db():
-    """Load theatre.json from repo, return dict."""
     content, _ = github_get_file("my-boxoffice/theatre.json")
     if content:
         try:
@@ -103,12 +207,11 @@ def load_theatre_db():
     return {}
 
 def save_theatre_db(theatre_db):
-    """Save theatre.json to repo."""
     content = json.dumps(theatre_db, indent=2, ensure_ascii=False)
     _, sha = github_get_file("my-boxoffice/theatre.json")
     github_put_file("my-boxoffice/theatre.json", content, sha)
 
-# ================= LOAD / SAVE DATA (new dict format) =================
+# ================= LOAD / SAVE DATA (dict format) =================
 def load_boxoffice_file(date_obj):
     year = date_obj.strftime("%Y")
     filename = date_obj.strftime("%d-%m.json")
@@ -121,12 +224,9 @@ def load_boxoffice_file(date_obj):
         shows = data.get("shows", [])
         if not shows:
             return []
-        # Detect format: list of dicts (new) or list of lists (old)
         if isinstance(shows[0], dict):
-            # New format: each show is a dict
             return shows
         else:
-            # Old format: compact list -> convert to dict
             converted = []
             for arr in shows:
                 if len(arr) >= 15:
@@ -147,15 +247,13 @@ def load_boxoffice_file(date_obj):
                         "adultTicketPrice": arr[13],
                         "grossRevenueMYR": arr[14],
                     }
-                    # Try to assign theatreId based on chain and theatre (might be ID or name)
                     chain = d["chain"]
                     theatre_val = d["theatre"]
                     if chain == "FST":
-                        d["theatreId"] = f"FST_{theatre_val}"  # theatre_val is cinema ID
+                        d["theatreId"] = f"FST_{theatre_val}"
                     elif chain == "TGV":
-                        d["theatreId"] = f"TGV_{theatre_val}"  # theatre_val is cinemaid
+                        d["theatreId"] = f"TGV_{theatre_val}"
                     elif chain == "GSC":
-                        # We need location_id, but we don't have it; fallback: use name
                         d["theatreId"] = f"GSC_{theatre_val.replace(' ', '_')}"
                     else:
                         d["theatreId"] = f"{chain}_{theatre_val}"
@@ -170,7 +268,6 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
         print(f"No shows for {date_obj}, skipping boxoffice file.")
         return
 
-    # Deduplicate by showtime_id
     seen = set()
     unique = []
     for s in shows_dict:
@@ -179,8 +276,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
             seen.add(sid)
             unique.append(s)
 
-    # Ensure each show has theatreId; if missing, attempt to generate
-    theatre_db = load_theatre_db()  # load current to get name mapping
+    # Ensure theatreId exists
     for s in unique:
         if "theatreId" not in s or not s["theatreId"]:
             chain = s.get("chain", "")
@@ -194,7 +290,6 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
             else:
                 s["theatreId"] = f"{chain}_{theatre}"
 
-    # Summary by movie (same as before)
     movie_summary = defaultdict(lambda: {
         "shows": 0,
         "tickets": 0,
@@ -229,19 +324,17 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
         ])
 
     output = {
-        "shows": unique,  # now list of dicts
+        "shows": unique,
         "summary": summary_list
     }
 
     year = date_obj.strftime("%Y")
     base_path = f"my-boxoffice/{year}"
-
     filename = date_obj.strftime("%d-%m.json")
     path = f"{base_path}/{filename}"
     _, sha = github_get_file(path)
     github_put_file(path, json.dumps(output, separators=(',', ':')), sha)
 
-    # Error file
     error_path = f"{base_path}/{date_obj.strftime('%d-%m')}_errors.json"
     _, sha = github_get_file(error_path)
     error_payload = {
@@ -250,7 +343,6 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
     }
     github_put_file(error_path, json.dumps(error_payload, indent=2, ensure_ascii=False), sha)
 
-    # Logs file
     logs_path = f"{base_path}/{date_obj.strftime('%d-%m')}_logs.json"
     existing_logs = []
     content, sha = github_get_file(logs_path)
@@ -294,7 +386,7 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
 seat_sem = asyncio.Semaphore(CONCURRENCY_SEATMAPS)
 showtime_sem = asyncio.Semaphore(CONCURRENCY_SHOWTIMES)
 
-# ================= FST FETCH (with theatre DB) =================
+# ================= FST FETCH =================
 async def get_fst_session():
     session = aiohttp.ClientSession()
     try:
@@ -372,7 +464,6 @@ async def fetch_fst_for_date(date_obj, movie_ids, theatre_db):
     async with await get_fst_session() as session:
         for movie_id in movie_ids:
             print(f"    📽️ FST: Movie ID {movie_id}")
-            # Step 1: get cinemas
             url_cinemas = "https://fst.com.my/Movies/MovieView"
             payload = {"id": movie_id, "showDate": date_str}
             headers = {
@@ -397,7 +488,6 @@ async def fetch_fst_for_date(date_obj, movie_ids, theatre_db):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
-            # Update theatre DB
             for cinema in cinemas:
                 theatre_id = f"FST_{cinema['Id']}"
                 if theatre_id not in theatre_db:
@@ -411,14 +501,12 @@ async def fetch_fst_for_date(date_obj, movie_ids, theatre_db):
                         "last_seen": date_str
                     }
                 else:
-                    # update fields if changed
                     theatre_db[theatre_id]["name"] = cinema.get("DisplayName", theatre_db[theatre_id].get("name", ""))
                     theatre_db[theatre_id]["city"] = cinema.get("City", theatre_db[theatre_id].get("city", ""))
                     theatre_db[theatre_id]["state"] = cinema.get("State", theatre_db[theatre_id].get("state", ""))
                     theatre_db[theatre_id]["address"] = cinema.get("Address", theatre_db[theatre_id].get("address", ""))
                     theatre_db[theatre_id]["last_seen"] = date_str
 
-            # Step 2: get showtimes per cinema
             cinema_tasks = []
             for cinema in cinemas:
                 cinema_tasks.append(fetch_fst_showtimes(session, movie_id, cinema["Id"], date_str))
@@ -435,7 +523,6 @@ async def fetch_fst_for_date(date_obj, movie_ids, theatre_db):
                 continue
             print(f"      🎬 Total showtimes: {len(all_shows)}")
 
-            # Step 3: fetch seat data
             print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
             seat_tasks = []
             for show in all_shows:
@@ -470,7 +557,7 @@ async def fetch_fst_for_date(date_obj, movie_ids, theatre_db):
                     })
     return shows
 
-# ================= TGV FETCH (with theatre DB) =================
+# ================= TGV FETCH (enhanced city extraction) =================
 async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
     async with showtime_sem:
         try:
@@ -599,15 +686,15 @@ async def fetch_tgv_for_date(date_obj, movie_ids, theatre_db):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
-            # Update theatre DB
             for cinema in all_cinemas:
                 theatre_id = f"TGV_{cinema['cinemaid']}"
+                city = get_tgv_city(cinema['name'])  # attempt to derive city
                 if theatre_id not in theatre_db:
                     theatre_db[theatre_id] = {
                         "id": cinema["cinemaid"],
                         "chain": "TGV",
                         "name": cinema["name"],
-                        "city": "",  # TGV doesn't give city per cinema, but we have state
+                        "city": city,
                         "state": cinema["state"],
                         "address": "",
                         "last_seen": date_str
@@ -615,6 +702,8 @@ async def fetch_tgv_for_date(date_obj, movie_ids, theatre_db):
                 else:
                     theatre_db[theatre_id]["name"] = cinema["name"]
                     theatre_db[theatre_id]["state"] = cinema["state"]
+                    if not theatre_db[theatre_id].get("city") and city:
+                        theatre_db[theatre_id]["city"] = city
                     theatre_db[theatre_id]["last_seen"] = date_str
 
             cinema_tasks = []
@@ -675,7 +764,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids, theatre_db):
                     })
     return shows
 
-# ================= GSC FETCH (with theatre DB) =================
+# ================= GSC FETCH (enhanced city/state extraction) =================
 async def fetch_gsc_seat(session, show, date_str):
     async with seat_sem:
         try:
@@ -738,9 +827,9 @@ async def fetch_gsc_for_date(date_obj, gsc_id, theatre_db):
                 for loc in root.findall(".//location"):
                     location_id = loc.get("id")
                     theatre_name = loc.get("name", "")
-                    city = ""
-                    state = ""
-                    # parse address for city/state? Not provided in simple fields, we can leave blank
+                    address = loc.get("address", "")
+                    # Parse city/state from address
+                    city, state = parse_gsc_address(address)
                     for child in loc.findall("child"):
                         film_id = child.get("code")
                         for show_elem in child.findall("show"):
@@ -759,24 +848,30 @@ async def fetch_gsc_for_date(date_obj, gsc_id, theatre_db):
                 if not show_list:
                     return []
 
-                # Update theatre DB
+                # Update theatre DB with city/state
                 for loc in root.findall(".//location"):
                     location_id = loc.get("id")
                     theatre_name = loc.get("name", "")
+                    address = loc.get("address", "")
+                    city, state = parse_gsc_address(address)
                     theatre_id = f"GSC_{location_id}"
                     if theatre_id not in theatre_db:
                         theatre_db[theatre_id] = {
                             "id": location_id,
                             "chain": "GSC",
                             "name": theatre_name,
-                            "city": "",
-                            "state": "",
-                            "address": loc.get("address", ""),
+                            "city": city,
+                            "state": state,
+                            "address": address,
                             "last_seen": date_str
                         }
                     else:
                         theatre_db[theatre_id]["name"] = theatre_name
-                        theatre_db[theatre_id]["address"] = loc.get("address", theatre_db[theatre_id].get("address", ""))
+                        theatre_db[theatre_id]["address"] = address
+                        if not theatre_db[theatre_id].get("city") and city:
+                            theatre_db[theatre_id]["city"] = city
+                        if not theatre_db[theatre_id].get("state") and state:
+                            theatre_db[theatre_id]["state"] = state
                         theatre_db[theatre_id]["last_seen"] = date_str
 
                 print(f"      💺 Fetching seat data for {len(show_list)} shows...")
@@ -808,8 +903,8 @@ async def fetch_gsc_for_date(date_obj, gsc_id, theatre_db):
                             "movie_id": gsc_id,
                             "theatre": theatre_name,
                             "theatreId": theatre_id,
-                            "city": show_obj.get("city", ""),
-                            "state": show_obj.get("state", ""),
+                            "city": show_obj.get("city", theatre_db.get(theatre_id, {}).get("city", "")),
+                            "state": show_obj.get("state", theatre_db.get(theatre_id, {}).get("state", "")),
                             "format": "Standard",
                             "language": "Unknown",
                             "totalSeatSold": seat_data["sold"],
@@ -824,8 +919,6 @@ async def fetch_gsc_for_date(date_obj, gsc_id, theatre_db):
 
 # ================= MERGE LOGIC =================
 def merge_show(old, new):
-    """Merge two show records, taking the one with higher sold count,
-       then recomputing occupancy and gross from the chosen price and sold."""
     if not old:
         return new
     if "error" in new:
@@ -857,11 +950,9 @@ async def main():
         print("❌ No movies configured. Exiting.")
         return
 
-    # Load theatre DB once
     theatre_db = load_theatre_db()
     print(f"🏢 Loaded {len(theatre_db)} theatres from theatre.json")
 
-    # Build date → movies mapping
     movies_by_date = defaultdict(list)
     for movie in MOVIES:
         start_date = date.fromisoformat(movie["dateStart"])
@@ -878,7 +969,6 @@ async def main():
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
-        # Load existing shows
         existing_shows = load_boxoffice_file(target_date)
         old_dict = {str(s.get("showtime_id")): s for s in existing_shows if "error" not in s}
         print(f"📂 Loaded {len(old_dict)} existing shows (excluding errors).")
@@ -916,7 +1006,6 @@ async def main():
                 for fresh in fresh_shows:
                     fresh["movie_title"] = movie_name
                     sid = str(fresh.get("showtime_id"))
-
                     if sid in merged_dict:
                         merged_dict[sid] = merge_show(merged_dict[sid], fresh)
                     else:
@@ -928,7 +1017,6 @@ async def main():
         error_shows = [s for s in merged_shows if "error" in s]
         save_boxoffice_file(target_date, merged_shows, error_shows)
 
-    # Save theatre DB after all dates processed
     save_theatre_db(theatre_db)
     print("💾 Theatre database saved.")
 
