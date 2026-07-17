@@ -8,6 +8,7 @@ import random
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from collections import defaultdict
+from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
@@ -399,7 +400,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
 
             indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
             seat_results = [None] * len(seat_tasks)
-            with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+            with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
                 for future in asyncio.as_completed(indexed_tasks):
                     idx, result = await future
                     seat_results[idx] = result
@@ -575,7 +576,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
 
             indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
             seat_results = [None] * len(seat_tasks)
-            with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+            with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
                 for future in asyncio.as_completed(indexed_tasks):
                     idx, result = await future
                     seat_results[idx] = result
@@ -692,7 +693,7 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
 
                 indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
                 seat_results = [None] * len(seat_tasks)
-                with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+                with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
                     for future in asyncio.as_completed(indexed_tasks):
                         idx, result = await future
                         seat_results[idx] = result
