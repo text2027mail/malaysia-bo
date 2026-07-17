@@ -774,62 +774,67 @@ async def main():
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
-        # Load existing shows for this date – only non‑error records
+        # Load existing shows – start with a copy of all old data
         existing_shows = load_boxoffice_file(target_date)
         old_dict = {str(s.get("showtime_id")): s for s in existing_shows if "error" not in s}
         print(f"📂 Loaded {len(old_dict)} existing shows (excluding errors).")
 
-        all_fresh = []
+        # This will be the final merged dictionary; we will remove stale entries per source as needed.
+        merged_dict = old_dict.copy()
+
         for movie in movies_for_date:
             movie_name = movie["name"]
             print(f"  🎬 Scraping {movie_name} for {target_date.strftime('%Y-%m-%d')}")
-            tasks = []
+
+            # Build list of (chain_name, movie_ids, coroutine)
+            sources = []
             if movie.get("fstIds"):
-                tasks.append(fetch_fst_for_date(target_date, movie["fstIds"]))
-            else:
-                tasks.append(asyncio.sleep(0, result=[]))
+                sources.append(("FST", movie["fstIds"], fetch_fst_for_date(target_date, movie["fstIds"])))
             if movie.get("tgvIds"):
-                tasks.append(fetch_tgv_for_date(target_date, movie["tgvIds"]))
-            else:
-                tasks.append(asyncio.sleep(0, result=[]))
+                sources.append(("TGV", movie["tgvIds"], fetch_tgv_for_date(target_date, movie["tgvIds"])))
             if movie.get("gscId"):
-                tasks.append(fetch_gsc_for_date(target_date, movie["gscId"]))
-            else:
-                tasks.append(asyncio.sleep(0, result=[]))
+                sources.append(("GSC", [movie["gscId"]], fetch_gsc_for_date(target_date, movie["gscId"])))
 
+            if not sources:
+                print(f"    ⚠️ No sources configured for {movie_name}, skipping.")
+                continue
+
+            tasks = [src[2] for src in sources]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            for chain_shows in results:
-                if isinstance(chain_shows, list):
-                    for s in chain_shows:
-                        s["movie_title"] = movie_name
-                        all_fresh.append(s)
-                elif isinstance(chain_shows, Exception):
-                    print(f"    ⚠️ Error in chain fetch: {chain_shows}")
 
-        print(f"  📊 Total fresh shows fetched: {len(all_fresh)}")
+            for idx, result in enumerate(results):
+                chain_name, ids, _ = sources[idx]
+                if isinstance(result, Exception):
+                    print(f"    ⚠️ {chain_name} fetch failed for {movie_name}: {result}")
+                    continue  # keep old shows for this source
 
-        # Build fresh dictionary (keyed by showtime_id) – only valid records
-        fresh_dict = {}
-        for s in all_fresh:
-            if "error" not in s:
-                sid = str(s.get("showtime_id"))
-                fresh_dict[sid] = s
+                fresh_shows = result  # list of shows
+                print(f"    ✅ {chain_name} fetched {len(fresh_shows)} shows for {movie_name}")
 
-        # If we got no fresh data at all, keep the existing data to avoid total loss
-        if not fresh_dict:
-            print("⚠️ No fresh data received – keeping existing data for this date.")
-            merged_shows = list(old_dict.values())
-        else:
-            # Start with a clean merged dict containing only fresh showtime IDs
-            merged_dict = {}
-            for sid, fresh_show in fresh_dict.items():
-                if sid in old_dict:
-                    merged_dict[sid] = merge_show(old_dict[sid], fresh_show)
-                else:
-                    merged_dict[sid] = fresh_show
-            merged_shows = list(merged_dict.values())
+                # Convert ids to set of strings for matching
+                movie_id_set = set(str(i) for i in ids)
 
-        print(f"🔄 After merging (fresh only): {len(merged_shows)} shows.")
+                # Remove old shows for this movie + chain from merged_dict
+                to_remove = [
+                    sid for sid, show in merged_dict.items()
+                    if show.get("chain") == chain_name and str(show.get("movie_id", "")) in movie_id_set
+                ]
+                for sid in to_remove:
+                    del merged_dict[sid]
+
+                # Add fresh shows, merging duplicates within this source (Patch 1)
+                for fresh in fresh_shows:
+                    fresh["movie_title"] = movie_name
+                    sid = str(fresh.get("showtime_id"))
+                    if sid in merged_dict:
+                        # Duplicate within the same source (or across sources, but unlikely)
+                        merged_dict[sid] = merge_show(merged_dict[sid], fresh)
+                    else:
+                        merged_dict[sid] = fresh
+
+        # After processing all movies, merged_dict contains the final set
+        merged_shows = list(merged_dict.values())
+        print(f"🔄 After merging: {len(merged_shows)} shows.")
 
         error_shows = [s for s in merged_shows if "error" in s]
         save_boxoffice_file(target_date, merged_shows, error_shows)
