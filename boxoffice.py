@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict
 from tqdm.asyncio import tqdm_asyncio
 import xml.etree.ElementTree as ET
-from bs4 import BeautifulSoup  # <-- new dependency
+from bs4 import BeautifulSoup
 
 print("📦 Imports loaded successfully")
 
@@ -303,12 +303,10 @@ async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
 
                 # Extract adult price
                 price = 0.0
-                # Look for radio with type-name="ADULT"
                 adult_radio = soup.find('input', {'type-name': 'ADULT', 'type': 'radio'})
                 if adult_radio and adult_radio.get('ticket-price'):
                     price = float(adult_radio['ticket-price'])
                 else:
-                    # fallback: any radio with ticket-price
                     first_radio = soup.find('input', {'type': 'radio', 'ticket-price': True})
                     if first_radio:
                         price = float(first_radio['ticket-price'])
@@ -420,7 +418,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                     })
     return shows
 
-# ================= TGV FETCH (correct price per sold seat) =================
+# ================= TGV FETCH =================
 async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
     async with showtime_sem:
         try:
@@ -450,7 +448,6 @@ async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
 async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
     async with seat_sem:
         try:
-            # 1. Get seat plan
             url_seat = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_getseatplan"
             payload_seat = {"cinemaid": cinemaid, "sessionid": sessionid}
             headers = {
@@ -464,7 +461,6 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
                 data = await resp.json()
                 areas = data["results"]["seatlayout"]["areas"]
 
-            # 2. Get ticket prices using area codes
             codes = [a["areaCategoryCode"] for a in areas if "areaCategoryCode" in a]
             codes_str = ",".join(codes) if codes else ""
             url_ticket = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_gettickets"
@@ -476,7 +472,6 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
             }
             async with session.post(url_ticket, json=payload_ticket, headers=headers, timeout=10) as resp2:
                 if resp2.status != 200:
-                    # fallback: try without area codes
                     payload_ticket["areacategorycodes"] = ""
                     async with session.post(url_ticket, json=payload_ticket, headers=headers, timeout=10) as resp3:
                         if resp3.status != 200:
@@ -493,7 +488,6 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
                     if code and (code not in price_map or price > price_map[code]):
                         price_map[code] = price
 
-                # 3. Iterate seats and sum gross
                 total_sold = 0
                 total_capacity = 0
                 gross = 0.0
@@ -503,7 +497,7 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
                     for row in area.get("rows", []):
                         for seat in row.get("seats", []):
                             total_capacity += 1
-                            if seat.get("status") == 1:  # sold
+                            if seat.get("status") == 1:
                                 total_sold += 1
                                 gross += price
 
@@ -520,7 +514,6 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
     async with aiohttp.ClientSession() as session:
         for movie_id in movie_ids:
             print(f"    📽️ TGV: Movie ID {movie_id}")
-            # Get cinemas
             try:
                 url_cinemas = f"{api_base}/moviesession_getmoviecinemas"
                 payload = {"businessday": date_str, "movieid": movie_id, "experienceGroup": ""}
@@ -547,7 +540,6 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
-            # Get sessions
             cinema_tasks = []
             for cinema in all_cinemas:
                 cinema_tasks.append(fetch_tgv_sessions(session, cinema["cinemaid"], movie_id, date_str))
@@ -564,7 +556,6 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                 continue
             print(f"      🎬 Total sessions: {len(all_sessions)}")
 
-            # Fetch seat data
             print(f"      💺 Fetching seat data for {len(all_sessions)} sessions...")
             seat_tasks = []
             for sess in all_sessions:
@@ -595,11 +586,10 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                     })
     return shows
 
-# ================= GSC FETCH (unchanged, already correct) =================
+# ================= GSC FETCH =================
 async def fetch_gsc_seat(session, show, date_str):
     async with seat_sem:
         try:
-            # Fetch pricing
             price_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getTicketPricingEpaySpecialV5?locationid={show['location_id']}&hallid={show['hall']}&filmid={show['film_id']}&showdate={date_str}&showtime={show['time']}"
             async with session.get(price_url, timeout=10) as resp_price:
                 if resp_price.status != 200:
@@ -620,7 +610,6 @@ async def fetch_gsc_seat(session, show, date_str):
                             price = float(first.get("price", "0"))
                             price_map[cat] = price
 
-            # Fetch seat status
             seat_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getHallSeatStatus?locationid={show['location_id']}&hallid={show['hall']}&showdate={date_str}&showtime={show['time']}"
             async with session.get(seat_url, timeout=10) as resp_seat:
                 if resp_seat.status != 200:
@@ -633,7 +622,7 @@ async def fetch_gsc_seat(session, show, date_str):
                 gross = 0.0
                 for col in cols:
                     status = col.get("status")
-                    if status != "A":  # sold
+                    if status != "A":
                         sold += 1
                         cat = col.get("seatcategory")
                         price = price_map.get(cat, 0.0)
@@ -708,8 +697,10 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
             print(f"GSC fetch error for {date_str}: {e}")
     return shows
 
-# ================= MERGE LOGIC (unchanged) =================
+# ================= MERGE LOGIC (UPDATED) =================
 def merge_show(old, new):
+    """Merge two show records, taking the one with higher sold count,
+       then recomputing occupancy and gross from the chosen price and sold."""
     if not old:
         return new
     if "error" in new:
@@ -723,7 +714,7 @@ def merge_show(old, new):
     total = chosen.get("totalSeatCount", 0)
     sold = chosen.get("totalSeatSold", 0)
     chosen["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
-    # Recompute gross from price * sold (price may have changed)
+    # Recompute gross from price * sold
     price = chosen.get("adultTicketPrice", 0.0)
     chosen["grossRevenueMYR"] = round(price * sold, 2)
     return chosen
@@ -759,13 +750,10 @@ async def main():
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
+        # Load existing shows for this date
         existing_shows = load_boxoffice_file(target_date)
-        print(f"📂 Loaded {len(existing_shows)} shows from existing boxoffice data (remote).")
-
-        merged_dict = {}
-        for s in existing_shows:
-            sid = str(s.get("showtime_id"))
-            merged_dict[sid] = s
+        existing_dict = {str(s.get("showtime_id")): s for s in existing_shows if "error" not in s}
+        print(f"📂 Loaded {len(existing_dict)} existing shows (excluding errors).")
 
         all_fresh = []
         for movie in movies_for_date:
@@ -796,16 +784,29 @@ async def main():
 
         print(f"  📊 Total fresh shows fetched: {len(all_fresh)}")
 
-        for fresh in all_fresh:
-            sid = str(fresh.get("showtime_id"))
-            if sid in merged_dict:
-                merged_dict[sid] = merge_show(merged_dict[sid], fresh)
-            else:
-                if "error" not in fresh:
-                    merged_dict[sid] = fresh
+        # Build fresh dictionary (keyed by showtime_id)
+        fresh_dict = {}
+        for s in all_fresh:
+            if "error" not in s:
+                sid = str(s.get("showtime_id"))
+                fresh_dict[sid] = s
 
-        merged_shows = list(merged_dict.values())
-        print(f"🔄 After merging: {len(merged_shows)} shows.")
+        # If we got no fresh data at all, keep the existing data to avoid total loss
+        if not fresh_dict:
+            print("⚠️ No fresh data received – keeping existing data for this date.")
+            merged_shows = list(existing_dict.values())
+        else:
+            # Start with a clean merged dict containing only fresh shows
+            merged_dict = {}
+            for sid, fresh_show in fresh_dict.items():
+                if sid in existing_dict:
+                    # Merge existing with fresh (take higher sold)
+                    merged_dict[sid] = merge_show(existing_dict[sid], fresh_show)
+                else:
+                    merged_dict[sid] = fresh_show
+            merged_shows = list(merged_dict.values())
+
+        print(f"🔄 After merging (fresh only): {len(merged_shows)} shows.")
 
         error_shows = [s for s in merged_shows if "error" in s]
         save_boxoffice_file(target_date, merged_shows, error_shows)
