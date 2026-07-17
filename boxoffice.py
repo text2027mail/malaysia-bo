@@ -387,14 +387,23 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 continue
             print(f"      🎬 Total showtimes: {len(all_shows)}")
 
-            # Fetch seat data
+            # Fetch seat data – order‑preserving
             print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
             seat_tasks = []
             for show in all_shows:
                 seat_tasks.append(fetch_fst_seat(session, movie_id, show["cinema_id"], show["show_id"], date_str))
-            seat_results = []
-            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
-                seat_results.append(await coro)
+
+            # Wrap each task to return its index
+            async def fetch_with_index(idx, coro):
+                return idx, await coro
+
+            indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
+            seat_results = [None] * len(seat_tasks)
+            with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+                for future in asyncio.as_completed(indexed_tasks):
+                    idx, result = await future
+                    seat_results[idx] = result
+                    pbar.update(1)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
@@ -560,9 +569,17 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
             seat_tasks = []
             for sess in all_sessions:
                 seat_tasks.append(fetch_tgv_seat(session, sess["cinemaid"], sess["sessionid"], date_str))
-            seat_results = []
-            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
-                seat_results.append(await coro)
+
+            async def fetch_with_index(idx, coro):
+                return idx, await coro
+
+            indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
+            seat_results = [None] * len(seat_tasks)
+            with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+                for future in asyncio.as_completed(indexed_tasks):
+                    idx, result = await future
+                    seat_results[idx] = result
+                    pbar.update(1)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
@@ -669,9 +686,17 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
                 seat_tasks = []
                 for show_obj in show_list:
                     seat_tasks.append(fetch_gsc_seat(session, show_obj, date_str))
-                seat_results = []
-                for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
-                    seat_results.append(await coro)
+
+                async def fetch_with_index(idx, coro):
+                    return idx, await coro
+
+                indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
+                seat_results = [None] * len(seat_tasks)
+                with tqdm_asyncio.tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+                    for future in asyncio.as_completed(indexed_tasks):
+                        idx, result = await future
+                        seat_results[idx] = result
+                        pbar.update(1)
 
                 for idx, seat_data in enumerate(seat_results):
                     if isinstance(seat_data, dict) and seat_data:
@@ -697,7 +722,7 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
             print(f"GSC fetch error for {date_str}: {e}")
     return shows
 
-# ================= MERGE LOGIC (UPDATED) =================
+# ================= MERGE LOGIC =================
 def merge_show(old, new):
     """Merge two show records, taking the one with higher sold count,
        then recomputing occupancy and gross from the chosen price and sold."""
@@ -714,7 +739,6 @@ def merge_show(old, new):
     total = chosen.get("totalSeatCount", 0)
     sold = chosen.get("totalSeatSold", 0)
     chosen["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
-    # Recompute gross from price * sold
     price = chosen.get("adultTicketPrice", 0.0)
     chosen["grossRevenueMYR"] = round(price * sold, 2)
     return chosen
@@ -750,10 +774,10 @@ async def main():
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
-        # Load existing shows for this date
+        # Load existing shows for this date – only non‑error records
         existing_shows = load_boxoffice_file(target_date)
-        existing_dict = {str(s.get("showtime_id")): s for s in existing_shows if "error" not in s}
-        print(f"📂 Loaded {len(existing_dict)} existing shows (excluding errors).")
+        old_dict = {str(s.get("showtime_id")): s for s in existing_shows if "error" not in s}
+        print(f"📂 Loaded {len(old_dict)} existing shows (excluding errors).")
 
         all_fresh = []
         for movie in movies_for_date:
@@ -784,7 +808,7 @@ async def main():
 
         print(f"  📊 Total fresh shows fetched: {len(all_fresh)}")
 
-        # Build fresh dictionary (keyed by showtime_id)
+        # Build fresh dictionary (keyed by showtime_id) – only valid records
         fresh_dict = {}
         for s in all_fresh:
             if "error" not in s:
@@ -794,14 +818,13 @@ async def main():
         # If we got no fresh data at all, keep the existing data to avoid total loss
         if not fresh_dict:
             print("⚠️ No fresh data received – keeping existing data for this date.")
-            merged_shows = list(existing_dict.values())
+            merged_shows = list(old_dict.values())
         else:
-            # Start with a clean merged dict containing only fresh shows
+            # Start with a clean merged dict containing only fresh showtime IDs
             merged_dict = {}
             for sid, fresh_show in fresh_dict.items():
-                if sid in existing_dict:
-                    # Merge existing with fresh (take higher sold)
-                    merged_dict[sid] = merge_show(existing_dict[sid], fresh_show)
+                if sid in old_dict:
+                    merged_dict[sid] = merge_show(old_dict[sid], fresh_show)
                 else:
                     merged_dict[sid] = fresh_show
             merged_shows = list(merged_dict.values())
