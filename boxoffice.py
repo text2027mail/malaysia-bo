@@ -342,7 +342,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
     async with await get_fst_session() as session:
         for movie_id in movie_ids:
             print(f"    📽️ FST: Movie ID {movie_id}")
-            # Get cinemas
+            # Step 1: get cinemas
             url_cinemas = "https://fst.com.my/Movies/MovieView"
             payload = {"id": movie_id, "showDate": date_str}
             headers = {
@@ -367,7 +367,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
-            # Get showtimes per cinema
+            # Step 2: get showtimes per cinema
             cinema_tasks = []
             for cinema in cinemas:
                 cinema_tasks.append(fetch_fst_showtimes(session, movie_id, cinema["Id"], date_str))
@@ -384,23 +384,14 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 continue
             print(f"      🎬 Total showtimes: {len(all_shows)}")
 
-            # Fetch seat data – order‑preserving
+            # Step 3: fetch seat data
             print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
             seat_tasks = []
             for show in all_shows:
                 seat_tasks.append(fetch_fst_seat(session, movie_id, show["cinema_id"], show["show_id"], date_str))
-
-            # Wrap each task to return its index
-            async def fetch_with_index(idx, coro):
-                return idx, await coro
-
-            indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
-            seat_results = [None] * len(seat_tasks)
-            with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
-                for future in asyncio.as_completed(indexed_tasks):
-                    idx, result = await future
-                    seat_results[idx] = result
-                    pbar.update(1)
+            seat_results = []
+            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
+                seat_results.append(await coro)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
@@ -817,16 +808,6 @@ async def main():
                     sid = str(fresh.get("showtime_id"))
 
                     if sid in merged_dict:
-                        merged_dict[sid] = merge_show(merged_dict[sid], fresh)
-                    else:
-                        merged_dict[sid] = fresh
-
-                # Add fresh shows, merging duplicates within this source (Patch 1)
-                for fresh in fresh_shows:
-                    fresh["movie_title"] = movie_name
-                    sid = str(fresh.get("showtime_id"))
-                    if sid in merged_dict:
-                        # Duplicate within the same source (or across sources, but unlikely)
                         merged_dict[sid] = merge_show(merged_dict[sid], fresh)
                     else:
                         merged_dict[sid] = fresh
