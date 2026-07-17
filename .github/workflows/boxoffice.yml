@@ -23,9 +23,10 @@ jobs:
       - name: Run boxoffice scraper (with retries)
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          PYTHONUNBUFFERED: 1       # force stdout/stderr to be unbuffered
         run: |
           for i in 1 2 3; do
             echo "Attempt $i to run scraper..."
-            python boxoffice.py && break
+            python -u boxoffice.py && break   # -u also ensures no buffering
             if [ $i -lt 3 ]; then sleep 10; else exit 1; fi
           done
