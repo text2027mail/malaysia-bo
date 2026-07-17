@@ -712,24 +712,20 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
 
 # ================= MERGE LOGIC =================
 def merge_show(old, new):
-    """Merge two show records, taking the one with higher sold count,
-       then recomputing occupancy and gross from the chosen price and sold."""
+    """Always replace an existing show with the latest scrape."""
     if not old:
         return new
+
     if "error" in new:
         return old
-    new_sold = new.get("totalSeatSold", 0)
-    old_sold = old.get("totalSeatSold", 0)
-    if new_sold > old_sold:
-        chosen = new.copy()
-    else:
-        chosen = old.copy()
-    total = chosen.get("totalSeatCount", 0)
-    sold = chosen.get("totalSeatSold", 0)
-    chosen["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
-    price = chosen.get("adultTicketPrice", 0.0)
-    chosen["grossRevenueMYR"] = round(price * sold, 2)
-    return chosen
+
+    total = new.get("totalSeatCount", 0)
+    sold = new.get("totalSeatSold", 0)
+
+    new["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
+    new["grossRevenueMYR"] = round(new.get("adultTicketPrice", 0.0) * sold, 2)
+
+    return new
 
 # ================= MAIN =================
 async def main():
