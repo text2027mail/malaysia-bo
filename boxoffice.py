@@ -805,6 +805,21 @@ async def main():
                     continue  # keep old shows for this source
 
                 fresh_shows = result  # list of shows
+                
+                ids = [s["showtime_id"] for s in fresh_shows]
+                
+                if len(ids) != len(set(ids)):
+                    print(f"⚠️ Duplicate {chain_name} showtime_ids in this scrape!")
+                
+                print(
+                    chain_name,
+                    "shows =", len(fresh_shows),
+                    "sold =", sum(s["totalSeatSold"] for s in fresh_shows),
+                    "gross =", round(sum(s["grossRevenueMYR"] for s in fresh_shows), 2)
+                )
+                
+                
+                
                 print(f"    ✅ {chain_name} fetched {len(fresh_shows)} shows for {movie_name}")
 
                 # Convert ids to set of strings for matching
@@ -827,6 +842,16 @@ async def main():
         print(f"🔄 After merging: {len(merged_shows)} shows.")
 
         error_shows = [s for s in merged_shows if "error" in s]
+        
+        
+        fst = [s for s in merged_shows if s["chain"] == "FST"]
+        
+        print(
+            "MERGED FST:",
+            len(fst),
+            sum(s["totalSeatSold"] for s in fst),
+            round(sum(s["grossRevenueMYR"] for s in fst), 2)
+        )
         save_boxoffice_file(target_date, merged_shows, error_shows)
 
     print("\n✅ Done.")
