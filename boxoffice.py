@@ -724,11 +724,20 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
 
 # ================= MERGE LOGIC =================
 def merge_show(old, new):
-    """Always replace an existing show with the latest scrape."""
+    """Replace only when the new scrape looks valid."""
+
     if not old:
         return new
 
     if "error" in new:
+        return old
+
+    # Seat fetch failed / invalid response
+    if (
+        new.get("totalSeatCount", 0) == 0
+        and new.get("totalSeatSold", 0) == 0
+        and new.get("grossRevenueMYR", 0) == 0
+    ):
         return old
 
     total = new.get("totalSeatCount", 0)
