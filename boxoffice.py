@@ -10,7 +10,6 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 from tqdm.asyncio import tqdm_asyncio
-from aiohttp_retry import RetryClient, ExponentialRetry
 import xml.etree.ElementTree as ET
 
 print("📦 Imports loaded successfully")
@@ -23,12 +22,12 @@ MOVIES = [
         "tgvIds": ["d313fe4c-671c-4ac6-b8fc-c76b9b5dcdea", "a8a96421-9761-4bc8-bf92-963924ba2d2f"],
         "gscId": "5772",
         "dateStart": "2026-07-23",
-        "dateEnd": "2026-07-23"
+        "dateEnd": "2026-07-26"
     }
 ]
 
-CONCURRENCY_SHOWTIMES = 10
-CONCURRENCY_SEATMAPS = 10
+CONCURRENCY_SHOWTIMES = 20
+CONCURRENCY_SEATMAPS = 50
 
 GITHUB_TOKEN = os.getenv("GH_PAT")
 if not GITHUB_TOKEN:
@@ -253,9 +252,24 @@ def save_boxoffice_file(date_obj, shows_dict, error_shows=None):
 seat_sem = asyncio.Semaphore(CONCURRENCY_SEATMAPS)
 showtime_sem = asyncio.Semaphore(CONCURRENCY_SHOWTIMES)
 
-# ================= FETCH FUNCTIONS =================
+# ================= FST HELPERS =================
+# We'll use a global session for FST with proper headers and cookie
+async def get_fst_session():
+    """Create a session with FST cookies by visiting the homepage."""
+    session = aiohttp.ClientSession()
+    # First visit the main page to get a session cookie
+    try:
+        async with session.get("https://fst.com.my/", headers={
+            "User-Agent": get_random_user_agent(),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        }) as resp:
+            # just to set cookie
+            pass
+    except Exception:
+        pass
+    return session
 
-# ---------- FST (LFS) ----------
+# ================= FST FETCH =================
 async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
     async with seat_sem:
         try:
@@ -266,17 +280,25 @@ async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
                 "MovieId": movie_id,
                 "Gender": "All"
             }
-            async with session.post(url, data=data, timeout=10) as resp:
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://fst.com.my/Movies/MovieView",
+                "User-Agent": get_random_user_agent(),
+                "Accept": "*/*",
+                "Accept-Language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+            }
+            async with session.post(url, data=data, headers=headers, timeout=10) as resp:
                 if resp.status != 200:
                     return None
                 html = await resp.text()
-                # Count all seat icons
+                # Count seats
                 total = len(re.findall(r'<div class="seat-icons', html))
                 booked = len(re.findall(r'class="seat-icons booked-clr', html))
-                # Extract adult ticket price – mimics JS logic
+                # Extract adult price (same as JS: look for ADULT radio, fallback to first)
                 price = 0.0
-                # Look for ADULT radio
-                match = re.search(r'type-name="ADULT".*?ticket-price="([\d.]+)"', html)
+                # Look for radio with type-name ADULT
+                match = re.search(r'type-name="ADULT".*?ticket-price="([\d.]+)"', html, re.DOTALL)
                 if match:
                     price = float(match.group(1))
                 else:
@@ -296,7 +318,14 @@ async def fetch_fst_showtimes(session, movie_id, cinema_id, date_str):
         try:
             url = "https://fst.com.my/Movies/GetShowTimes"
             payload = {"cinemaId": cinema_id, "movieId": movie_id, "showDate": date_str}
-            async with session.post(url, data=payload, timeout=10) as resp:
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://fst.com.my/Movies/MovieView",
+                "User-Agent": get_random_user_agent(),
+                "Accept": "*/*",
+            }
+            async with session.post(url, data=payload, headers=headers, timeout=10) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json()
@@ -308,13 +337,22 @@ async def fetch_fst_showtimes(session, movie_id, cinema_id, date_str):
 async def fetch_fst_for_date(date_obj, movie_ids):
     date_str = to_fst_date(date_obj)
     shows = []
-    async with aiohttp.ClientSession() as session:
+    # Use a single session per date for FST
+    async with await get_fst_session() as session:
         for movie_id in movie_ids:
             print(f"    📽️ FST: Movie ID {movie_id}")
+            # Step 1: get cinemas
             url_cinemas = "https://fst.com.my/Movies/MovieView"
             payload = {"id": movie_id, "showDate": date_str}
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://fst.com.my/Movies/MovieView",
+                "User-Agent": get_random_user_agent(),
+                "Accept": "*/*",
+            }
             try:
-                async with session.post(url_cinemas, data=payload, timeout=10) as resp:
+                async with session.post(url_cinemas, data=payload, headers=headers, timeout=10) as resp:
                     if resp.status != 200:
                         print(f"      ⚠️ Cinema fetch failed (HTTP {resp.status})")
                         continue
@@ -328,6 +366,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
+            # Step 2: get showtimes per cinema
             cinema_tasks = []
             for cinema in cinemas:
                 cinema_tasks.append(fetch_fst_showtimes(session, movie_id, cinema["Id"], date_str))
@@ -344,6 +383,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 continue
             print(f"      🎬 Total showtimes: {len(all_shows)}")
 
+            # Step 3: fetch seat data
             print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
             seat_tasks = []
             for show in all_shows:
@@ -374,13 +414,18 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                     })
     return shows
 
-# ---------- TGV ----------
+# ================= TGV FETCH =================
 async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
     async with showtime_sem:
         try:
             url = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_get"
             payload = {"cinemaid": cinemaid, "businessdate": date_str, "movieid": movieid, "retrieveexpired": False}
-            async with session.post(url, json=payload, timeout=10) as resp:
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": get_random_user_agent(),
+                "Accept": "application/json",
+            }
+            async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json()
@@ -398,36 +443,54 @@ async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
 async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
     async with seat_sem:
         try:
+            # Step 1: get seat plan
             url_seat = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_getseatplan"
-            payload = {"cinemaid": cinemaid, "sessionid": sessionid}
-            async with session.post(url_seat, json=payload, timeout=10) as resp:
+            payload_seat = {"cinemaid": cinemaid, "sessionid": sessionid}
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": get_random_user_agent(),
+                "Accept": "application/json",
+            }
+            async with session.post(url_seat, json=payload_seat, headers=headers, timeout=10) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
                 areas = data["results"]["seatlayout"]["areas"]
 
+            # Step 2: get ticket prices – we need to call with area codes
+            # First, get codes from areas
+            codes = [a["areaCategoryCode"] for a in areas if "areaCategoryCode" in a]
+            codes_str = ",".join(codes) if codes else ""
+
             url_ticket = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_gettickets"
-            payload_ticket = {"cinemaid": cinemaid, "sessionid": sessionid, "areacategorycodes": "", "usetemplateuser": True}
-            async with session.post(url_ticket, json=payload_ticket, timeout=10) as resp2:
+            payload_ticket = {
+                "cinemaid": cinemaid,
+                "sessionid": sessionid,
+                "areacategorycodes": codes_str,
+                "usetemplateuser": True
+            }
+            async with session.post(url_ticket, json=payload_ticket, headers=headers, timeout=10) as resp2:
                 if resp2.status != 200:
                     return None
                 ticket_data = await resp2.json()
                 tickets = ticket_data["results"]["tickets"]
+                # Build price map: max price per areaCategoryCode
                 price_map = {}
                 for t in tickets:
-                    code = t["areaCategoryCode"]
-                    price = t["priceInCents"] / 100.0
-                    if code not in price_map or price > price_map[code]:
+                    code = t.get("areaCategoryCode")
+                    price = t.get("priceInCents", 0) / 100.0
+                    if code and (code not in price_map or price > price_map[code]):
                         price_map[code] = price
 
+                # Now iterate areas, count sold seats and sum gross
                 total_sold = 0
                 total_capacity = 0
                 gross = 0.0
-                # Iterate areas and rows to count sold and sum prices
                 for area in areas:
-                    code = area["areaCategoryCode"]
+                    code = area.get("areaCategoryCode")
                     price = price_map.get(code, 0.0)
-                    for row in area.get("rows", []):
+                    rows = area.get("rows", [])
+                    for row in rows:
                         for seat in row.get("seats", []):
                             total_capacity += 1
                             if seat.get("status") == 1:  # sold
@@ -446,10 +509,16 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
     async with aiohttp.ClientSession() as session:
         for movie_id in movie_ids:
             print(f"    📽️ TGV: Movie ID {movie_id}")
+            # get cinemas
             try:
                 url_cinemas = f"{api_base}/moviesession_getmoviecinemas"
                 payload = {"businessday": date_str, "movieid": movie_id, "experienceGroup": ""}
-                async with session.post(url_cinemas, json=payload, timeout=10) as resp:
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": get_random_user_agent(),
+                    "Accept": "application/json",
+                }
+                async with session.post(url_cinemas, json=payload, headers=headers, timeout=10) as resp:
                     if resp.status != 200:
                         print(f"      ⚠️ Cinema fetch failed (HTTP {resp.status})")
                         continue
@@ -467,6 +536,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                 print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
+            # get sessions
             cinema_tasks = []
             for cinema in all_cinemas:
                 cinema_tasks.append(fetch_tgv_sessions(session, cinema["cinemaid"], movie_id, date_str))
@@ -483,6 +553,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                 continue
             print(f"      🎬 Total sessions: {len(all_sessions)}")
 
+            # fetch seat data
             print(f"      💺 Fetching seat data for {len(all_sessions)} sessions...")
             seat_tasks = []
             for sess in all_sessions:
@@ -513,7 +584,7 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                     })
     return shows
 
-# ---------- GSC ----------
+# ================= GSC FETCH =================
 async def fetch_gsc_seat(session, show, date_str):
     async with seat_sem:
         try:
@@ -642,7 +713,6 @@ def merge_show(old, new):
     total = chosen.get("totalSeatCount", 0)
     sold = chosen.get("totalSeatSold", 0)
     chosen["occupancy"] = round((sold / total) * 100, 2) if total else 0.0
-    # Recompute gross from price * sold (price may have changed)
     price = chosen.get("adultTicketPrice", 0.0)
     chosen["grossRevenueMYR"] = round(price * sold, 2)
     return chosen
