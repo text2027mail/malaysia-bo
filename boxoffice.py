@@ -386,12 +386,24 @@ async def fetch_fst_for_date(date_obj, movie_ids):
 
             # Step 3: fetch seat data
             print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
-            seat_tasks = []
-            for show in all_shows:
-                seat_tasks.append(fetch_fst_seat(session, movie_id, show["cinema_id"], show["show_id"], date_str))
-            seat_results = []
-            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
-                seat_results.append(await coro)
+            
+            
+            seat_tasks = [
+                fetch_fst_seat(session, movie_id, show["cinema_id"], show["show_id"], date_str)
+                for show in all_shows
+            ]
+
+            async def fetch_with_index(idx, coro):
+                return idx, await coro
+
+            indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
+            seat_results = [None] * len(seat_tasks)
+
+            with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
+                for future in asyncio.as_completed(indexed_tasks):
+                    idx, result = await future
+                    seat_results[idx] = result
+                    pbar.update(1)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
