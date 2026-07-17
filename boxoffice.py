@@ -4,6 +4,7 @@ import requests
 import json
 import os
 import base64
+import re
 import random
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -295,23 +296,18 @@ async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
                 if resp.status != 200:
                     return None
                 html = await resp.text()
-                soup = BeautifulSoup(html, 'html.parser')
-
-                # Count seats
-                seat_icons = soup.find_all('div', class_='seat-icons')
-                total = len(seat_icons)
-                booked = sum(1 for el in seat_icons if 'booked-clr' in el.get('class', []))
-
+                # Count seats using regex (same as V2)
+                total = len(re.findall(r'<div class="seat-icons', html))
+                booked = len(re.findall(r'class="seat-icons booked-clr', html))
                 # Extract adult price
                 price = 0.0
-                adult_radio = soup.find('input', {'type-name': 'ADULT', 'type': 'radio'})
-                if adult_radio and adult_radio.get('ticket-price'):
-                    price = float(adult_radio['ticket-price'])
+                match = re.search(r'type-name="ADULT".*?ticket-price="([\d.]+)"', html, re.DOTALL)
+                if match:
+                    price = float(match.group(1))
                 else:
-                    first_radio = soup.find('input', {'type': 'radio', 'ticket-price': True})
-                    if first_radio:
-                        price = float(first_radio['ticket-price'])
-
+                    match = re.search(r'ticket-price="([\d.]+)"', html)
+                    if match:
+                        price = float(match.group(1))
                 gross = round(price * booked, 2)
                 return {"total": total, "sold": booked, "price": price, "gross": gross}
         except Exception as e:
