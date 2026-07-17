@@ -23,7 +23,7 @@ MOVIES = [
         "tgvIds": ["d313fe4c-671c-4ac6-b8fc-c76b9b5dcdea", "a8a96421-9761-4bc8-bf92-963924ba2d2f"],
         "gscId": "5772",
         "dateStart": "2026-07-23",
-        "dateEnd": "2026-07-23"
+        "dateEnd": "2026-07-26"
     }
     # Add more movies here
 ]
@@ -653,36 +653,45 @@ async def scrape_date(date_obj):
     print(f"  📊 Total shows fetched: {len(all_shows)}")
     return all_shows
 
-
 async def main():
-    # Malaysian timezone
     tz = ZoneInfo("Asia/Kuala_Lumpur")
     today = datetime.now(tz).date()
     print(f"📅 Today in Malaysia: {today.strftime('%Y-%m-%d')}")
 
-    # Group movies by their target date (max of today and dateEnd)
+    # Group movies by the dates they need to scrape
     movies_by_date = defaultdict(list)
-    for movie in MOVIES:
-        end_date = date.fromisoformat(movie["dateEnd"])
-        target_date = max(today, end_date)  # future end date or today
-        movies_by_date[target_date].append(movie)
-        print(f"  🎬 {movie['name']} → target date: {target_date.strftime('%Y-%m-%d')}")
 
-    # For each target date, scrape all movies assigned to it
+    for movie in MOVIES:
+        start_date = date.fromisoformat(movie["dateStart"])
+        end_date = date.fromisoformat(movie["dateEnd"])
+
+        if today <= end_date:
+            # Scrape from max(today, start_date) to end_date inclusive
+            first_date = max(today, start_date)
+            if first_date <= end_date:
+                # Generate all dates in the range
+                delta_days = (end_date - first_date).days
+                for i in range(delta_days + 1):
+                    scrape_date = first_date + timedelta(days=i)
+                    movies_by_date[scrape_date].append(movie)
+        else:
+            # After the movie's run, scrape only today
+            movies_by_date[today].append(movie)
+
+    # Process each unique date
     for target_date, movies_for_date in movies_by_date.items():
         print(f"\n📅 Processing date: {target_date.strftime('%Y-%m-%d')}")
 
-        # Load existing boxoffice data for this date (from GitHub)
+        # Load existing data for this target_date
         existing_shows = load_boxoffice_file(target_date)
         print(f"📂 Loaded {len(existing_shows)} shows from existing boxoffice data (remote).")
 
-        # Build merged dict from existing
         merged_dict = {}
         for s in existing_shows:
             sid = str(s.get("showtime_id"))
             merged_dict[sid] = s
 
-        # Scrape fresh data for this date (only for the relevant movies)
+        # Scrape fresh data for this date from all movies that need it
         all_fresh = []
         for movie in movies_for_date:
             movie_name = movie["name"]
@@ -710,7 +719,7 @@ async def main():
                 elif isinstance(chain_shows, Exception):
                     print(f"    ⚠️ Error in chain fetch: {chain_shows}")
 
-        print(f"  📊 Total fresh shows fetched for {target_date.strftime('%Y-%m-%d')}: {len(all_fresh)}")
+        print(f"  📊 Total fresh shows fetched: {len(all_fresh)}")
 
         # Merge fresh into merged_dict
         for fresh in all_fresh:
@@ -722,7 +731,7 @@ async def main():
                     merged_dict[sid] = fresh
 
         merged_shows = list(merged_dict.values())
-        print(f"🔄 After merging: {len(merged_shows)} shows for {target_date.strftime('%Y-%m-%d')}.")
+        print(f"🔄 After merging: {len(merged_shows)} shows.")
 
         # Separate errors for logging
         error_shows = [s for s in merged_shows if "error" in s]
@@ -731,6 +740,3 @@ async def main():
         save_boxoffice_file(target_date, merged_shows, error_shows)
 
     print("\n✅ Done.")
-
-if __name__ == "__main__":
-    asyncio.run(main())
