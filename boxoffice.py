@@ -10,6 +10,7 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio   # <-- for async progress bars
 from aiohttp_retry import RetryClient, ExponentialRetry
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import xml.etree.ElementTree as ET
@@ -30,7 +31,7 @@ MOVIES = [
     # Add more movies here
 ]
 
-# Concurrency limits – now actually used with semaphores
+# Concurrency limits
 CONCURRENCY_SHOWTIMES = 20   # parallel chain requests
 CONCURRENCY_SEATMAPS = 50    # parallel seat fetch requests
 
@@ -40,9 +41,6 @@ if not GITHUB_TOKEN:
 
 REPO_OWNER = "text2027mail"          # <-- CHANGE to your GitHub username
 REPO_NAME = "malaysiabo2026"        # <-- CHANGE if repo name differs
-
-# Chains
-CHAINS = ["FST", "TGV", "GSC"]
 
 # ================= HELPERS =================
 def to_fst_date(d: date) -> str:
@@ -269,7 +267,6 @@ showtime_sem = asyncio.Semaphore(CONCURRENCY_SHOWTIMES)
 
 # ---------- FST (LFS) ----------
 async def fetch_fst_seat(session, movie_id, cinema_id, show_id, date_str):
-    """Fetch seat layout for one FST show."""
     async with seat_sem:
         try:
             url = "https://fst.com.my/SeatLayout/GetSeatLayout"
@@ -309,23 +306,28 @@ async def fetch_fst_showtimes(session, movie_id, cinema_id, date_str):
             return []
 
 async def fetch_fst_for_date(date_obj, movie_ids):
-    """Fetch all FST shows for a given date and movie IDs."""
+    """Fetch all FST shows for a given date and movie IDs – with detailed logging."""
     date_str = to_fst_date(date_obj)
     shows = []
     async with aiohttp.ClientSession() as session:
         for movie_id in movie_ids:
+            print(f"    📽️ FST: Movie ID {movie_id}")
             # Step 1: get cinemas
             url_cinemas = "https://fst.com.my/Movies/MovieView"
             payload = {"id": movie_id, "showDate": date_str}
             try:
                 async with session.post(url_cinemas, data=payload, timeout=10) as resp:
                     if resp.status != 200:
+                        print(f"      ⚠️ Cinema fetch failed (HTTP {resp.status})")
                         continue
                     data = await resp.json()
                     cinemas = data.get("Result", [])
                     if not cinemas:
+                        print(f"      ⚠️ No cinemas found for {date_str}")
                         continue
-            except:
+                    print(f"      🏢 Found {len(cinemas)} cinemas")
+            except Exception as e:
+                print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
             # Step 2: get showtimes per cinema
@@ -334,18 +336,25 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                 cinema_tasks.append(fetch_fst_showtimes(session, movie_id, cinema["Id"], date_str))
             showtime_results = await asyncio.gather(*cinema_tasks, return_exceptions=True)
             all_shows = []
-            for res in showtime_results:
+            for idx, res in enumerate(showtime_results):
                 if isinstance(res, list):
                     all_shows.extend(res)
-
+                    print(f"        Cinema {cinemas[idx]['Id']}: {len(res)} showtimes")
+                elif isinstance(res, Exception):
+                    print(f"        Cinema {cinemas[idx]['Id']}: error - {res}")
             if not all_shows:
+                print(f"      ⚠️ No showtimes found for movie {movie_id}")
                 continue
+            print(f"      🎬 Total showtimes: {len(all_shows)}")
 
-            # Step 3: fetch seat data for each show
+            # Step 3: fetch seat data for each show with progress bar
+            print(f"      💺 Fetching seat data for {len(all_shows)} shows...")
             seat_tasks = []
             for show in all_shows:
                 seat_tasks.append(fetch_fst_seat(session, movie_id, show["cinema_id"], show["show_id"], date_str))
-            seat_results = await asyncio.gather(*seat_tasks, return_exceptions=True)
+            seat_results = []
+            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
+                seat_results.append(await coro)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
@@ -356,7 +365,7 @@ async def fetch_fst_for_date(date_obj, movie_ids):
                         "chain": "FST",
                         "movie_title": "",
                         "movie_id": str(movie_id),
-                        "theatre": str(show["cinema_id"]),  # no name available
+                        "theatre": str(show["cinema_id"]),
                         "city": "",
                         "state": "",
                         "format": "Standard",
@@ -393,7 +402,6 @@ async def fetch_tgv_sessions(session, cinemaid, movieid, date_str):
 async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
     async with seat_sem:
         try:
-            # Fetch seat plan
             url_seat = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_getseatplan"
             payload = {"cinemaid": cinemaid, "sessionid": sessionid}
             async with session.post(url_seat, json=payload, timeout=10) as resp:
@@ -402,7 +410,6 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
                 data = await resp.json()
                 areas = data["results"]["seatlayout"]["areas"]
 
-            # Fetch ticket prices
             url_ticket = "https://api.tgv.com.my/api/boxoffice/v1/moviesession_gettickets"
             payload_ticket = {"cinemaid": cinemaid, "sessionid": sessionid, "areacategorycodes": "", "usetemplateuser": True}
             async with session.post(url_ticket, json=payload_ticket, timeout=10) as resp2:
@@ -427,7 +434,7 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
                     for row in rows:
                         for seat in row.get("seats", []):
                             total_capacity += 1
-                            if seat.get("status") == 1:  # sold
+                            if seat.get("status") == 1:
                                 total_sold += 1
                                 area_prices.append(price)
                 gross = sum(area_prices)
@@ -437,17 +444,20 @@ async def fetch_tgv_seat(session, cinemaid, sessionid, date_str):
             return None
 
 async def fetch_tgv_for_date(date_obj, movie_ids):
+    """Fetch all TGV shows – with detailed logging."""
     date_str = to_tgv_date(date_obj)
     api_base = "https://api.tgv.com.my/api/boxoffice/v1"
     shows = []
     async with aiohttp.ClientSession() as session:
         for movie_id in movie_ids:
+            print(f"    📽️ TGV: Movie ID {movie_id}")
             # get cinemas
             try:
                 url_cinemas = f"{api_base}/moviesession_getmoviecinemas"
                 payload = {"businessday": date_str, "movieid": movie_id, "experienceGroup": ""}
                 async with session.post(url_cinemas, json=payload, timeout=10) as resp:
                     if resp.status != 200:
+                        print(f"      ⚠️ Cinema fetch failed (HTTP {resp.status})")
                         continue
                     data = await resp.json()
                     cinemas = data["results"]["locations"]
@@ -456,8 +466,11 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                         for c in loc["cinemaids"]:
                             all_cinemas.append({"cinemaid": c["cinemaid"], "state": loc["state"]})
                     if not all_cinemas:
+                        print(f"      ⚠️ No cinemas found for {date_str}")
                         continue
-            except:
+                    print(f"      🏢 Found {len(all_cinemas)} cinemas")
+            except Exception as e:
+                print(f"      ❌ Error fetching cinemas: {e}")
                 continue
 
             # get sessions
@@ -466,18 +479,25 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
                 cinema_tasks.append(fetch_tgv_sessions(session, cinema["cinemaid"], movie_id, date_str))
             session_results = await asyncio.gather(*cinema_tasks, return_exceptions=True)
             all_sessions = []
-            for res in session_results:
+            for idx, res in enumerate(session_results):
                 if isinstance(res, list):
                     all_sessions.extend(res)
-
+                    print(f"        Cinema {all_cinemas[idx]['cinemaid']}: {len(res)} sessions")
+                elif isinstance(res, Exception):
+                    print(f"        Cinema {all_cinemas[idx]['cinemaid']}: error - {res}")
             if not all_sessions:
+                print(f"      ⚠️ No sessions found for movie {movie_id}")
                 continue
+            print(f"      🎬 Total sessions: {len(all_sessions)}")
 
-            # fetch seat data
+            # fetch seat data with progress bar
+            print(f"      💺 Fetching seat data for {len(all_sessions)} sessions...")
             seat_tasks = []
             for sess in all_sessions:
                 seat_tasks.append(fetch_tgv_seat(session, sess["cinemaid"], sess["sessionid"], date_str))
-            seat_results = await asyncio.gather(*seat_tasks, return_exceptions=True)
+            seat_results = []
+            for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
+                seat_results.append(await coro)
 
             for idx, seat_data in enumerate(seat_results):
                 if isinstance(seat_data, dict) and seat_data:
@@ -532,6 +552,7 @@ async def fetch_gsc_seat(session, show, date_str):
             return None
 
 async def fetch_gsc_for_date(date_obj, gsc_id):
+    """Fetch all GSC shows – with detailed logging."""
     date_str = to_gsc_date(date_obj)
     base_show = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getShowTimesByMovie_ParentChild_V2?parentid={gsc_id}&oprndate={date_str}"
     shows = []
@@ -539,9 +560,11 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
         try:
             async with session.get(base_show, timeout=10) as resp:
                 if resp.status != 200:
+                    print(f"    GSC: fetch failed (HTTP {resp.status})")
                     return []
                 xml_text = await resp.text()
                 root = ET.fromstring(xml_text)
+                show_list = []
                 for loc in root.findall(".//location"):
                     theatre = loc.get("name")
                     location_id = loc.get("id")
@@ -550,32 +573,46 @@ async def fetch_gsc_for_date(date_obj, gsc_id):
                         for show_elem in child.findall("show"):
                             hid = show_elem.get("hid")
                             time = show_elem.get("time")
-                            show_obj = {
+                            show_list.append({
                                 "location_id": location_id,
                                 "film_id": film_id,
                                 "theatre": theatre,
                                 "hall": hid,
                                 "time": time,
-                            }
-                            seat_data = await fetch_gsc_seat(session, show_obj, date_str)
-                            if seat_data:
-                                shows.append({
-                                    "showtime_id": f"GSC_{location_id}_{hid}_{time}",
-                                    "date": date_str,
-                                    "chain": "GSC",
-                                    "movie_title": "",
-                                    "movie_id": gsc_id,
-                                    "theatre": theatre,
-                                    "city": "",
-                                    "state": "",
-                                    "format": "Standard",
-                                    "language": "Unknown",
-                                    "totalSeatSold": seat_data["sold"],
-                                    "totalSeatCount": seat_data["total"],
-                                    "occupancy": round((seat_data["sold"] / seat_data["total"]) * 100, 2) if seat_data["total"] else 0.0,
-                                    "adultTicketPrice": seat_data["price"],
-                                    "grossRevenueMYR": round(seat_data["price"] * seat_data["sold"], 2),
-                                })
+                            })
+                print(f"    GSC: Found {len(show_list)} shows across {len(set(s['location_id'] for s in show_list))} locations")
+                if not show_list:
+                    return []
+
+                # Fetch seat data with progress bar
+                print(f"      💺 Fetching seat data for {len(show_list)} shows...")
+                seat_tasks = []
+                for show_obj in show_list:
+                    seat_tasks.append(fetch_gsc_seat(session, show_obj, date_str))
+                seat_results = []
+                for coro in tqdm_asyncio.as_completed(seat_tasks, desc="      Seats", total=len(seat_tasks), leave=False):
+                    seat_results.append(await coro)
+
+                for idx, seat_data in enumerate(seat_results):
+                    if isinstance(seat_data, dict) and seat_data:
+                        show_obj = show_list[idx]
+                        shows.append({
+                            "showtime_id": f"GSC_{show_obj['location_id']}_{show_obj['hall']}_{show_obj['time']}",
+                            "date": date_str,
+                            "chain": "GSC",
+                            "movie_title": "",
+                            "movie_id": gsc_id,
+                            "theatre": show_obj["theatre"],
+                            "city": "",
+                            "state": "",
+                            "format": "Standard",
+                            "language": "Unknown",
+                            "totalSeatSold": seat_data["sold"],
+                            "totalSeatCount": seat_data["total"],
+                            "occupancy": round((seat_data["sold"] / seat_data["total"]) * 100, 2) if seat_data["total"] else 0.0,
+                            "adultTicketPrice": seat_data["price"],
+                            "grossRevenueMYR": round(seat_data["price"] * seat_data["sold"], 2),
+                        })
         except Exception as e:
             print(f"GSC fetch error for {date_str}: {e}")
     return shows
