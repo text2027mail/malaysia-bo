@@ -1,0 +1,31 @@
+name: Malaysia Box Office Scraper
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (main repo)
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run boxoffice scraper (with retries)
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i to run scraper..."
+            python boxoffice.py && break
+            if [ $i -lt 3 ]; then sleep 10; else exit 1; fi
+          done
