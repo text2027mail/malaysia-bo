@@ -30,8 +30,8 @@ MOVIES = [
         "fstIds": [4407, 4413],
         "tgvIds": ["d313fe4c-671c-4ac6-b8fc-c76b9b5dcdea", "a8a96421-9761-4bc8-bf92-963924ba2d2f"],
         "gscId": "5772",
-        "dateStart": "2026-07-27",
-        "dateEnd": "2026-08-05"
+        "dateStart": "2026-08-03",
+        "dateEnd": "2026-08-08"
     },
 
     {
@@ -39,8 +39,8 @@ MOVIES = [
       "fstIds": [4742, 4759, 4761],
       "tgvIds": ["8f555398-29fb-4a15-b3a3-f8d31be3377c"],
       "gscId": "5099",
-      "dateStart": "2026-07-30",
-      "dateEnd": "2026-08-05"
+      "dateStart": "2026-08-03",
+      "dateEnd": "2026-08-08"
     }   
 ]
 
