@@ -40,7 +40,7 @@ MOVIES = [
       "tgvIds": ["8f555398-29fb-4a15-b3a3-f8d31be3377c"],
       "gscId": "5099",
       "dateStart": "2026-08-03",
-      "dateEnd": "2026-08-08"
+      "dateEnd": "2026-08-15"
     }   
 ]
 
