@@ -33,14 +33,29 @@ MOVIES = [
         "dateStart": "2026-08-03",
         "dateEnd": "2026-08-08"
     },
-
+    {
+        "name": "Vishwanath And Sons",
+        "fstIds": [4784],
+        "tgvIds": ["1d9a5797-900a-4e32-8615-779f3c7b8bdc"],
+        "gscId": "",
+        "dateStart": "2026-08-14",
+        "dateEnd": "2026-08-17"
+    },
+        {
+        "name": "Awarapan 2",
+        "fstIds": [],
+        "tgvIds": ["f3c826d3-70ae-469a-9b12-f7cd0182e4b9"],
+        "gscId": "",
+        "dateStart": "2026-08-14",
+        "dateEnd": "2026-08-17"
+    },
     {
       "name": "Spiderman Brand New Day",
       "fstIds": [4742, 4759, 4761],
       "tgvIds": ["8f555398-29fb-4a15-b3a3-f8d31be3377c"],
       "gscId": "5099",
       "dateStart": "2026-08-03",
-      "dateEnd": "2026-08-15"
+      "dateEnd": "2026-08-17"
     }   
 ]
 
