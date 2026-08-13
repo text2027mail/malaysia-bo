@@ -49,12 +49,21 @@ MOVIES = [
         "dateStart": "2026-08-14",
         "dateEnd": "2026-08-17"
     },
+            {
+        "name": "Batwara 1947",
+        "fstIds": [],
+        "tgvIds": ["7dc4b30a-d310-483c-b7af-eb788f2353e7"],
+        "gscId": "",
+        "dateStart": "2026-08-14",
+        "dateEnd": "2026-08-17"
+    },
+    
     {
       "name": "Spiderman Brand New Day",
       "fstIds": [4742, 4759, 4761],
       "tgvIds": ["8f555398-29fb-4a15-b3a3-f8d31be3377c"],
       "gscId": "5099",
-      "dateStart": "2026-08-03",
+      "dateStart": "2026-08-11",
       "dateEnd": "2026-08-17"
     }   
 ]
