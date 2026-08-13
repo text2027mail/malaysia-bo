@@ -37,7 +37,7 @@ MOVIES = [
         "name": "Vishwanath And Sons",
         "fstIds": [4784],
         "tgvIds": ["1d9a5797-900a-4e32-8615-779f3c7b8bdc"],
-        "gscId": "",
+        "gscId": "6315",
         "dateStart": "2026-08-14",
         "dateEnd": "2026-08-17"
     },
