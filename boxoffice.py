@@ -45,7 +45,7 @@ MOVIES = [
         "name": "Awarapan 2",
         "fstIds": [],
         "tgvIds": ["f3c826d3-70ae-469a-9b12-f7cd0182e4b9"],
-        "gscId": "",
+        "gscId": "6317",
         "dateStart": "2026-08-14",
         "dateEnd": "2026-08-17"
     },
@@ -53,7 +53,7 @@ MOVIES = [
         "name": "Batwara 1947",
         "fstIds": [],
         "tgvIds": ["7dc4b30a-d310-483c-b7af-eb788f2353e7"],
-        "gscId": "",
+        "gscId": "6318",
         "dateStart": "2026-08-14",
         "dateEnd": "2026-08-17"
     },
