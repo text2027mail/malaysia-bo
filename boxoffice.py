@@ -26,12 +26,12 @@ except ImportError:
 # ================= CONFIGURATION =================
 MOVIES = [
     {
-        "name": "Jana Nayagan",
-        "fstIds": [4407, 4413],
-        "tgvIds": ["d313fe4c-671c-4ac6-b8fc-c76b9b5dcdea", "a8a96421-9761-4bc8-bf92-963924ba2d2f"],
-        "gscId": "5772",
-        "dateStart": "2026-08-03",
-        "dateEnd": "2026-08-08"
+        "name": "Toxic",
+        "fstIds": [4801, 4816],
+        "tgvIds": ["24f5cd6d-54e5-4bf9-8721-62d654d1ed40", "eaf15870-c2a3-47cf-8ef7-0b7ac58a25b8", "49b61681-6091-468a-ac63-316c4065afec"],
+        "gscId": "",
+        "dateStart": "2026-08-26",
+        "dateEnd": "2026-08-31"
     },
     {
         "name": "Vishwanath And Sons",
