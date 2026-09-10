@@ -25,47 +25,94 @@ except ImportError:
 
 # ================= CONFIGURATION =================
 MOVIES = [
-    {
-        "name": "Toxic",
-        "fstIds": [4801, 4816],
-        "tgvIds": ["24f5cd6d-54e5-4bf9-8721-62d654d1ed40", "eaf15870-c2a3-47cf-8ef7-0b7ac58a25b8", "49b61681-6091-468a-ac63-316c4065afec"],
-        "gscId": "",
-        "dateStart": "2026-08-26",
-        "dateEnd": "2026-08-31"
-    },
-    {
-        "name": "Vishwanath And Sons",
-        "fstIds": [4784],
-        "tgvIds": ["1d9a5797-900a-4e32-8615-779f3c7b8bdc"],
-        "gscId": "6315",
-        "dateStart": "2026-08-14",
-        "dateEnd": "2026-08-17"
-    },
-        {
-        "name": "Awarapan 2",
-        "fstIds": [],
-        "tgvIds": ["f3c826d3-70ae-469a-9b12-f7cd0182e4b9"],
-        "gscId": "6317",
-        "dateStart": "2026-08-14",
-        "dateEnd": "2026-08-17"
-    },
-            {
-        "name": "Batwara 1947",
-        "fstIds": [],
-        "tgvIds": ["7dc4b30a-d310-483c-b7af-eb788f2353e7"],
-        "gscId": "6318",
-        "dateStart": "2026-08-14",
-        "dateEnd": "2026-08-17"
-    },
-    
-    {
-      "name": "Spiderman Brand New Day",
-      "fstIds": [4742, 4759, 4761],
-      "tgvIds": ["8f555398-29fb-4a15-b3a3-f8d31be3377c"],
-      "gscId": "5099",
-      "dateStart": "2026-08-11",
-      "dateEnd": "2026-08-17"
-    }   
+  {
+    "name": "Mandaadi",
+    "fstIds": [
+      4820
+    ],
+    "tgvIds": [
+      "de62edca-a0e2-49be-8393-2f98d5a6dc6f"
+    ],
+    "gscId": "6391",
+    "dateStart": "2026-09-10",
+    "dateEnd": "2026-09-13"
+  },
+  {
+    "name": "Sardar 2",
+    "fstIds": [
+      4834,
+      4821
+    ],
+    "tgvIds": [
+      "5f3b71be-74be-4c1c-8204-152bca0031c8"
+    ],
+    "gscId": "6390",
+    "dateStart": "2026-09-10",
+    "dateEnd": "2026-09-13"
+  },
+  {
+    "name": "Mirzapur The Movie",
+    "fstIds": [],
+    "tgvIds": [
+      "d2b1106f-86e0-44d5-94f8-699635ad95df"
+    ],
+    "gscId": "6377",
+    "dateStart": "2026-09-10",
+    "dateEnd": "2026-09-13"
+  },
+  {
+    "name": "Haiwaan",
+    "fstIds": [
+      4833
+    ],
+    "tgvIds": [
+      "6127fd32-6613-4ecd-98f8-3b3a2763d7c5"
+    ],
+    "gscId": "",
+    "dateStart": "2026-09-11",
+    "dateEnd": "2026-09-13"
+  },
+  {
+    "name": "Spiderman Brand New Day",
+    "fstIds": [
+      4742,
+      4759,
+      4761
+    ],
+    "tgvIds": [
+      "8f555398-29fb-4a15-b3a3-f8d31be3377c"
+    ],
+    "gscId": "5099",
+    "dateStart": "2026-08-11",
+    "dateEnd": "2026-08-17"
+  },
+  {
+    "name": "Toxic",
+    "fstIds": [
+      4801,
+      4816
+    ],
+    "tgvIds": [
+      "24f5cd6d-54e5-4bf9-8721-62d654d1ed40",
+      "eaf15870-c2a3-47cf-8ef7-0b7ac58a25b8",
+      "49b61681-6091-468a-ac63-316c4065afec"
+    ],
+    "gscId": "",
+    "dateStart": "2026-08-26",
+    "dateEnd": "2026-08-31"
+  },
+  {
+    "name": "Vishwanath And Sons",
+    "fstIds": [
+      4784
+    ],
+    "tgvIds": [
+      "1d9a5797-900a-4e32-8615-779f3c7b8bdc"
+    ],
+    "gscId": "6315",
+    "dateStart": "2026-08-14",
+    "dateEnd": "2026-08-17"
+  }
 ]
 
 CONCURRENCY_SHOWTIMES = 5
