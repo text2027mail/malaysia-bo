@@ -68,7 +68,7 @@ MOVIES = [
     "tgvIds": [
       "6127fd32-6613-4ecd-98f8-3b3a2763d7c5"
     ],
-    "gscId": "",
+    "gscId": "6407",
     "dateStart": "2026-09-11",
     "dateEnd": "2026-09-13"
   },
