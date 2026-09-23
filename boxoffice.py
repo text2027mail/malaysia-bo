@@ -26,6 +26,38 @@ except ImportError:
 # ================= CONFIGURATION =================
 MOVIES = [
   {
+    "name": "The Paradise",
+    "fstIds": [],
+    "tgvIds": [
+      "c7e8aac8-ba5d-477e-8ef5-8091d0af0329",
+      "61c93cbd-4679-4f14-b9cd-bd01bda6c603"
+    ],
+    "gscId": "",
+    "dateStart": "2026-09-24",
+    "dateEnd": "2026-09-28"
+  },
+  {
+    "name": "Avengers Endgame Encore",
+    "fstIds": [
+      4855,
+      4856,
+      4837
+    ],
+    "tgvIds": [
+      "f3f5b5d7-f524-49c7-9322-396b9ed3cb28",
+      "31ee5251-95f8-476b-85ed-e9e07ea6babb",
+      "374cf0d4-704b-4bc5-80e9-5087001ffade"
+    ],
+    "gscIds": [
+      6413,
+      6409,
+      6412,
+      6360
+    ],
+    "dateStart": "2026-09-25",
+    "dateEnd": "2026-09-28"
+  },
+  {
     "name": "Mandaadi",
     "fstIds": [
       4820
@@ -33,7 +65,9 @@ MOVIES = [
     "tgvIds": [
       "de62edca-a0e2-49be-8393-2f98d5a6dc6f"
     ],
-    "gscId": "6391",
+    "gscIds": [
+      6391
+    ],
     "dateStart": "2026-09-10",
     "dateEnd": "2026-09-13"
   },
@@ -46,7 +80,9 @@ MOVIES = [
     "tgvIds": [
       "5f3b71be-74be-4c1c-8204-152bca0031c8"
     ],
-    "gscId": "6390",
+    "gscIds": [
+      6390
+    ],
     "dateStart": "2026-09-10",
     "dateEnd": "2026-09-13"
   },
@@ -56,7 +92,9 @@ MOVIES = [
     "tgvIds": [
       "d2b1106f-86e0-44d5-94f8-699635ad95df"
     ],
-    "gscId": "6377",
+    "gscIds": [
+      6377
+    ],
     "dateStart": "2026-09-10",
     "dateEnd": "2026-09-13"
   },
@@ -68,7 +106,9 @@ MOVIES = [
     "tgvIds": [
       "6127fd32-6613-4ecd-98f8-3b3a2763d7c5"
     ],
-    "gscId": "6407",
+    "gscIds": [
+      6407
+    ],
     "dateStart": "2026-09-11",
     "dateEnd": "2026-09-13"
   },
@@ -82,7 +122,9 @@ MOVIES = [
     "tgvIds": [
       "8f555398-29fb-4a15-b3a3-f8d31be3377c"
     ],
-    "gscId": "5099",
+    "gscIds": [
+      5099
+    ],
     "dateStart": "2026-08-11",
     "dateEnd": "2026-08-17"
   },
@@ -97,7 +139,7 @@ MOVIES = [
       "eaf15870-c2a3-47cf-8ef7-0b7ac58a25b8",
       "49b61681-6091-468a-ac63-316c4065afec"
     ],
-    "gscId": "",
+    "gscIds": [],
     "dateStart": "2026-08-26",
     "dateEnd": "2026-08-31"
   },
@@ -109,7 +151,9 @@ MOVIES = [
     "tgvIds": [
       "1d9a5797-900a-4e32-8615-779f3c7b8bdc"
     ],
-    "gscId": "6315",
+    "gscIds": [
+      6315
+    ],
     "dateStart": "2026-08-14",
     "dateEnd": "2026-08-17"
   }
@@ -142,6 +186,50 @@ def get_random_user_agent():
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ]
     return random.choice(uas)
+
+def get_gsc_ids(movie):
+    """
+    Return normalized GSC parent IDs.
+
+    Preferred config:
+        "gscIds": [6413, 6409, 6412, 6360]
+
+    Backward-compatible configs also supported:
+        "gscId": 6413
+        "gscId": "6413"
+        "gscId": "6413, 6409, 6412, 6360"
+        "gscIds": "6413, 6409"
+    """
+    raw_ids = movie.get("gscIds")
+
+    if raw_ids is None:
+        raw_ids = movie.get("gscId")
+
+    if raw_ids is None:
+        return []
+
+    if isinstance(raw_ids, (str, int)):
+        raw_ids = [raw_ids]
+
+    normalized = []
+    seen = set()
+
+    for value in raw_ids:
+        if value is None:
+            continue
+
+        parts = str(value).split(",")
+
+        for part in parts:
+            gsc_id = part.strip()
+
+            if not gsc_id or gsc_id in seen:
+                continue
+
+            seen.add(gsc_id)
+            normalized.append(gsc_id)
+
+    return normalized
 
 # ================= GITHUB HELPERS =================
 def github_get_file(path):
@@ -687,7 +775,16 @@ async def fetch_tgv_for_date(date_obj, movie_ids):
 async def fetch_gsc_seat(session, show, date_str):
     async with seat_sem:
         try:
-            price_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getTicketPricingEpaySpecialV5?locationid={show['location_id']}&hallid={show['hall']}&filmid={show['film_id']}&showdate={date_str}&showtime={show['time']}"
+            price_url = (
+                "https://epaymentapi.gsc.com.my/showtimews/service.asmx/"
+                f"getTicketPricingEpaySpecialV5?"
+                f"locationid={show['location_id']}"
+                f"&hallid={show['hall']}"
+                f"&filmid={show['film_id']}"
+                f"&showdate={date_str}"
+                f"&showtime={show['time']}"
+            )
+
             async with session.get(price_url, timeout=10) as resp_price:
                 if resp_price.status != 200:
                     price_map = {}
@@ -695,11 +792,13 @@ async def fetch_gsc_seat(session, show, date_str):
                     price_xml = await resp_price.text()
                     price_root = ET.fromstring(price_xml)
                     price_map = {}
+
                     for ticket in price_root.findall(".//ticket"):
                         cat = ticket.get("seatcategory")
                         if cat:
                             price = float(ticket.get("price", "0"))
                             price_map[cat] = price
+
                     if not price_map:
                         first = price_root.find(".//ticket")
                         if first is not None:
@@ -707,99 +806,236 @@ async def fetch_gsc_seat(session, show, date_str):
                             price = float(first.get("price", "0"))
                             price_map[cat] = price
 
-            seat_url = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getHallSeatStatus?locationid={show['location_id']}&hallid={show['hall']}&showdate={date_str}&showtime={show['time']}"
+            seat_url = (
+                "https://epaymentapi.gsc.com.my/showtimews/service.asmx/"
+                f"getHallSeatStatus?"
+                f"locationid={show['location_id']}"
+                f"&hallid={show['hall']}"
+                f"&showdate={date_str}"
+                f"&showtime={show['time']}"
+            )
+
             async with session.get(seat_url, timeout=10) as resp_seat:
                 if resp_seat.status != 200:
                     return None
+
                 seat_xml = await resp_seat.text()
                 seat_root = ET.fromstring(seat_xml)
                 cols = seat_root.findall(".//col")
+
                 total = len(cols)
                 sold = 0
                 gross = 0.0
+
                 for col in cols:
                     status = col.get("status")
+
                     if status != "A":
                         sold += 1
                         cat = col.get("seatcategory")
                         price = price_map.get(cat, 0.0)
                         gross += price
+
                 avg_price = gross / sold if sold else 0.0
-                return {"total": total, "sold": sold, "price": avg_price, "gross": round(gross, 2)}
+
+                return {
+                    "total": total,
+                    "sold": sold,
+                    "price": avg_price,
+                    "gross": round(gross, 2),
+                }
+
         except Exception as e:
             print(f"      GSC seat fetch error: {e}")
             return None
 
-async def fetch_gsc_for_date(date_obj, gsc_id):
-    date_str = to_gsc_date(date_obj)
-    base_show = f"https://epaymentapi.gsc.com.my/showtimews/service.asmx/getShowTimesByMovie_ParentChild_V2?parentid={gsc_id}&oprndate={date_str}"
-    shows = []
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(base_show, timeout=10) as resp:
-                if resp.status != 200:
-                    print(f"    GSC: fetch failed (HTTP {resp.status})")
-                    return []
-                xml_text = await resp.text()
-                root = ET.fromstring(xml_text)
-                show_list = []
-                for loc in root.findall(".//location"):
-                    theatre = loc.get("name")
-                    location_id = loc.get("id")
-                    for child in loc.findall("child"):
-                        film_id = child.get("code")
-                        for show_elem in child.findall("show"):
-                            hid = show_elem.get("hid")
-                            time = show_elem.get("time")
-                            show_list.append({
-                                "location_id": location_id,
-                                "film_id": film_id,
-                                "theatre": theatre,
-                                "hall": hid,
-                                "time": time,
-                            })
-                print(f"    GSC: Found {len(show_list)} shows across {len(set(s['location_id'] for s in show_list))} locations")
-                if not show_list:
-                    return []
 
-                print(f"      💺 Fetching seat data for {len(show_list)} shows...")
-                seat_tasks = []
-                for show_obj in show_list:
-                    seat_tasks.append(fetch_gsc_seat(session, show_obj, date_str))
+async def fetch_gsc_for_parent(session, date_str, gsc_id):
+    """
+    Fetch all GSC shows for one parent movie ID.
 
-                async def fetch_with_index(idx, coro):
-                    return idx, await coro
+    Each GSC parent ID is handled independently so a failed ID does
+    not prevent the remaining configured GSC IDs from being scraped.
+    """
+    base_show = (
+        "https://epaymentapi.gsc.com.my/showtimews/service.asmx/"
+        f"getShowTimesByMovie_ParentChild_V2?"
+        f"parentid={gsc_id}&oprndate={date_str}"
+    )
 
-                indexed_tasks = [fetch_with_index(i, task) for i, task in enumerate(seat_tasks)]
-                seat_results = [None] * len(seat_tasks)
-                with tqdm(total=len(seat_tasks), desc="      Seats", leave=False) as pbar:
-                    for future in asyncio.as_completed(indexed_tasks):
-                        idx, result = await future
-                        seat_results[idx] = result
-                        pbar.update(1)
+    try:
+        async with session.get(base_show, timeout=10) as resp:
+            if resp.status != 200:
+                print(f"    GSC ID {gsc_id}: fetch failed (HTTP {resp.status})")
+                return []
 
-                for idx, seat_data in enumerate(seat_results):
-                    if isinstance(seat_data, dict) and seat_data:
-                        show_obj = show_list[idx]
-                        shows.append({
-                            "showtime_id": f"GSC_{show_obj['location_id']}_{show_obj['hall']}_{show_obj['time']}",
-                            "date": date_str,
-                            "chain": "GSC",
-                            "movie_title": "",
-                            "movie_id": gsc_id,
-                            "theatre": show_obj["theatre"],
-                            "city": "",
-                            "state": "",
-                            "format": "Standard",
-                            "language": "Unknown",
-                            "totalSeatSold": seat_data["sold"],
-                            "totalSeatCount": seat_data["total"],
-                            "occupancy": round((seat_data["sold"] / seat_data["total"]) * 100, 2) if seat_data["total"] else 0.0,
-                            "adultTicketPrice": seat_data["price"],
-                            "grossRevenueMYR": seat_data["gross"],
+            xml_text = await resp.text()
+            root = ET.fromstring(xml_text)
+
+            show_list = []
+
+            for loc in root.findall(".//location"):
+                theatre = loc.get("name", "")
+                location_id = loc.get("id", "")
+
+                for child in loc.findall("child"):
+                    film_id = child.get("code", "")
+
+                    for show_elem in child.findall("show"):
+                        hid = show_elem.get("hid", "")
+                        time = show_elem.get("time", "")
+
+                        if not location_id or not hid or not time:
+                            continue
+
+                        show_list.append({
+                            "location_id": location_id,
+                            "film_id": film_id,
+                            "theatre": theatre,
+                            "hall": hid,
+                            "time": time,
+                            "gsc_parent_id": gsc_id,
                         })
-        except Exception as e:
-            print(f"GSC fetch error for {date_str}: {e}")
+
+            location_count = len({
+                s["location_id"]
+                for s in show_list
+                if s.get("location_id")
+            })
+
+            print(
+                f"    GSC ID {gsc_id}: Found "
+                f"{len(show_list)} shows across {location_count} locations"
+            )
+
+            if not show_list:
+                return []
+
+            print(
+                f"      💺 GSC ID {gsc_id}: "
+                f"Fetching seat data for {len(show_list)} shows..."
+            )
+
+            seat_tasks = [
+                fetch_gsc_seat(session, show_obj, date_str)
+                for show_obj in show_list
+            ]
+
+            async def fetch_with_index(idx, coro):
+                return idx, await coro
+
+            indexed_tasks = [
+                fetch_with_index(i, task)
+                for i, task in enumerate(seat_tasks)
+            ]
+
+            seat_results = [None] * len(seat_tasks)
+
+            with tqdm(
+                total=len(seat_tasks),
+                desc=f"      GSC {gsc_id} Seats",
+                leave=False
+            ) as pbar:
+                for future in asyncio.as_completed(indexed_tasks):
+                    idx, result = await future
+                    seat_results[idx] = result
+                    pbar.update(1)
+
+            shows = []
+
+            for idx, seat_data in enumerate(seat_results):
+                if isinstance(seat_data, dict) and seat_data:
+                    show_obj = show_list[idx]
+
+                    shows.append({
+                        # Keep the original GSC showtime ID format so that
+                        # identical physical shows returned by multiple
+                        # parent IDs deduplicate correctly.
+                        "showtime_id": (
+                            f"GSC_{show_obj['location_id']}_"
+                            f"{show_obj['hall']}_{show_obj['time']}"
+                        ),
+                        "date": date_str,
+                        "chain": "GSC",
+                        "movie_title": "",
+                        "movie_id": str(gsc_id),
+                        "theatre": show_obj["theatre"],
+                        "city": "",
+                        "state": "",
+                        "format": "Standard",
+                        "language": "Unknown",
+                        "totalSeatSold": seat_data["sold"],
+                        "totalSeatCount": seat_data["total"],
+                        "occupancy": (
+                            round(
+                                (seat_data["sold"] / seat_data["total"]) * 100,
+                                2
+                            )
+                            if seat_data["total"]
+                            else 0.0
+                        ),
+                        "adultTicketPrice": seat_data["price"],
+                        "grossRevenueMYR": seat_data["gross"],
+                    })
+
+            return shows
+
+    except Exception as e:
+        print(f"    GSC ID {gsc_id} fetch error for {date_str}: {e}")
+        return []
+
+
+async def fetch_gsc_for_date(date_obj, gsc_ids):
+    """
+    Fetch GSC data for multiple parent movie IDs.
+
+    Example:
+        gsc_ids = [6413, 6409, 6412, 6360]
+
+    All IDs are fetched independently using one shared HTTP session.
+    Results are combined and deduplicated by showtime_id.
+    """
+    date_str = to_gsc_date(date_obj)
+
+    if isinstance(gsc_ids, (str, int)):
+        gsc_ids = get_gsc_ids({"gscIds": gsc_ids})
+    else:
+        gsc_ids = get_gsc_ids({"gscIds": gsc_ids})
+
+    if not gsc_ids:
+        return []
+
+    print(f"    GSC: Processing {len(gsc_ids)} parent ID(s): {', '.join(gsc_ids)}")
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [
+            fetch_gsc_for_parent(session, date_str, gsc_id)
+            for gsc_id in gsc_ids
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    combined = {}
+
+    for gsc_id, result in zip(gsc_ids, results):
+        if isinstance(result, Exception):
+            print(f"    ⚠️ GSC ID {gsc_id} failed: {result}")
+            continue
+
+        for show in result:
+            sid = str(show["showtime_id"])
+
+            # Do not duplicate a physical show if two GSC parent IDs
+            # return the same location + hall + time.
+            combined[sid] = show
+
+    shows = list(combined.values())
+
+    print(
+        f"    ✅ GSC: Combined {len(shows)} unique shows "
+        f"from {len(gsc_ids)} parent ID(s)"
+    )
+
     return shows
 
 # ================= MERGE LOGIC =================
@@ -877,8 +1113,9 @@ async def main():
                 sources.append(("FST", movie["fstIds"], fetch_fst_for_date(target_date, movie["fstIds"])))
             if movie.get("tgvIds"):
                 sources.append(("TGV", movie["tgvIds"], fetch_tgv_for_date(target_date, movie["tgvIds"])))
-            if movie.get("gscId"):
-                sources.append(("GSC", [movie["gscId"]], fetch_gsc_for_date(target_date, movie["gscId"])))
+            gsc_ids = get_gsc_ids(movie)
+            if gsc_ids:
+                sources.append(("GSC", gsc_ids, fetch_gsc_for_date(target_date, gsc_ids)))
 
             if not sources:
                 print(f"    ⚠️ No sources configured for {movie_name}, skipping.")
