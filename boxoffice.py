@@ -27,7 +27,7 @@ except ImportError:
 MOVIES = [
     {
     "name": "Jailer 2",
-    "fstIds": [],
+    "fstIds": [4865, 4871],
     "tgvIds": [
       "265ef9a2-647f-44b3-8052-ed81cec72615",
       "0e471a49-b50a-47c0-a8a3-12e7dc60526f"
