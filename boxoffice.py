@@ -25,6 +25,17 @@ except ImportError:
 
 # ================= CONFIGURATION =================
 MOVIES = [
+    {
+    "name": "Jailer 2",
+    "fstIds": [],
+    "tgvIds": [
+      "265ef9a2-647f-44b3-8052-ed81cec72615",
+      "0e471a49-b50a-47c0-a8a3-12e7dc60526f"
+    ],
+    "gscId": "6484",
+    "dateStart": "2026-10-15",
+    "dateEnd": "2026-10-18"
+  },
   {
     "name": "The Paradise",
     "fstIds": [],
